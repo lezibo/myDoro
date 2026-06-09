@@ -1,0 +1,429 @@
+use crate::prefs::{self, SharedPrefs};
+use crate::state_machine::SharedState;
+use crate::util::MutexExt;
+use crate::windows::{self, get_pet_bounds, MonitorArea, WindowBounds};
+use crate::{emit_state, sync_hit};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize};
+
+/// Monotonic generation counter — each new animation bumps this; if the counter
+/// advances while an animation is running, the old animation stops.
+pub type AnimationGeneration = Arc<AtomicU64>;
+
+/// Epoch-millis deadline: peek detection is suppressed until this instant passes.
+/// Set when entering mini mode so the entry animation isn't hijacked by peek_in.
+/// Newtype wrapper to avoid Tauri managed-state collision with AnimationGeneration.
+#[derive(Clone)]
+pub struct PeekSuppressDeadline(Arc<AtomicU64>);
+
+impl PeekSuppressDeadline {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicU64::new(0)))
+    }
+    pub fn load(&self) -> u64 {
+        self.0.load(Ordering::SeqCst)
+    }
+    pub fn store(&self, val: u64) {
+        self.0.store(val, Ordering::SeqCst);
+    }
+}
+
+/// Snap-to-edge trigger distance as a ratio of the current pet window width.
+const SNAP_TOLERANCE_RATIO: f64 = 0.10;
+const PEEK_OFFSET_LP: f64 = 25.0;
+pub const MINI_OFFSET_RATIO: f64 = 0.486;
+const MINI_WINDOW_DIMENSION: u32 = 120;
+
+/// Sentinel value: suppress peek until mouse exits the pet vicinity.
+const PEEK_WAIT_FOR_EXIT: u64 = u64::MAX;
+
+/// Check if peek detection is currently suppressed.
+/// Returns `true` if suppression is active (time-based or waiting for mouse exit).
+pub fn is_peek_suppressed(app: &AppHandle) -> bool {
+    app.try_state::<PeekSuppressDeadline>()
+        .map(|d| {
+            let deadline = d.load();
+            if deadline == PEEK_WAIT_FOR_EXIT {
+                return true;
+            }
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            now < deadline
+        })
+        .unwrap_or(false)
+}
+
+/// Called by the tick loop when mouse is NOT near the pet and suppression is
+/// in "wait for exit" mode — clears the suppression so peek can trigger on
+/// the next approach.
+pub fn clear_peek_suppression_if_mouse_away(app: &AppHandle) {
+    if let Some(d) = app.try_state::<PeekSuppressDeadline>() {
+        if d.load() == PEEK_WAIT_FOR_EXIT {
+            d.store(0);
+        }
+    }
+}
+
+fn suppress_peek_until_mouse_exit(app: &AppHandle) {
+    if let Some(d) = app.try_state::<PeekSuppressDeadline>() {
+        d.store(PEEK_WAIT_FOR_EXIT);
+    }
+}
+
+/// Snap tolerance in physical pixels for the current pet width.
+pub fn snap_tolerance_for_width(width: u32) -> i32 {
+    (width as f64 * SNAP_TOLERANCE_RATIO).round() as i32
+}
+
+/// Peek offset in physical pixels for the current DPI.
+fn peek_offset(app: &AppHandle) -> i32 {
+    (PEEK_OFFSET_LP * windows::pet_scale_factor(app)).round() as i32
+}
+
+/// Which screen edge the pet is snapping to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SnapSide {
+    Left,
+    Right,
+}
+
+pub fn should_snap_to_edge(app: &AppHandle) -> Option<EdgeSnap> {
+    let bounds = get_pet_bounds(app)?;
+    edge_snap_for_bounds(app, &bounds)
+}
+
+pub fn edge_snap_for_bounds(app: &AppHandle, bounds: &WindowBounds) -> Option<EdgeSnap> {
+    let monitor = windows::monitor_for_bounds(app, bounds)?;
+    let tolerance = snap_tolerance_for_width(bounds.width);
+    let screen_left = monitor.x;
+    let screen_right = monitor.x + monitor.width as i32;
+    let pet_right = bounds.x + bounds.width as i32;
+
+    if screen_right - pet_right <= tolerance {
+        Some(EdgeSnap {
+            monitor,
+            width: bounds.width,
+            side: SnapSide::Right,
+        })
+    } else if bounds.x - screen_left <= tolerance {
+        Some(EdgeSnap {
+            monitor,
+            width: bounds.width,
+            side: SnapSide::Left,
+        })
+    } else {
+        None
+    }
+}
+
+pub struct EdgeSnap {
+    pub monitor: MonitorArea,
+    pub width: u32,
+    pub side: SnapSide,
+}
+
+impl EdgeSnap {
+    /// The X position where the pet hides at the edge (partially off-screen).
+    /// Uses monitor-relative coordinates so it works on any monitor.
+    pub fn hidden_x(&self) -> i32 {
+        match self.side {
+            SnapSide::Right => {
+                self.monitor.x + self.monitor.width as i32
+                    - (self.width as f64 * MINI_OFFSET_RATIO).round() as i32
+            }
+            SnapSide::Left => {
+                self.monitor.x - (self.width as f64 * (1.0 - MINI_OFFSET_RATIO)).round() as i32
+            }
+        }
+    }
+}
+
+pub fn snap_side_key(side: SnapSide) -> &'static str {
+    match side {
+        SnapSide::Left => "left",
+        SnapSide::Right => "right",
+    }
+}
+
+pub fn snap_side_from_key(side: &str) -> Option<SnapSide> {
+    match side {
+        "left" => Some(SnapSide::Left),
+        "right" => Some(SnapSide::Right),
+        _ => None,
+    }
+}
+
+pub fn remember_snap_for_current_monitor(app: &AppHandle) {
+    let Some(snap) = should_snap_to_edge(app) else {
+        return;
+    };
+    let Some(bounds) = get_pet_bounds(app) else {
+        return;
+    };
+    let Some(prefs_state) = app.try_state::<SharedPrefs>() else {
+        return;
+    };
+    let mut prefs = prefs_state.lock_or_recover();
+    let placement = prefs
+        .monitor_positions
+        .entry(snap.monitor.key.clone())
+        .or_default();
+    placement.x = bounds.x;
+    placement.y = bounds.y;
+    placement.mini_side = Some(snap_side_key(snap.side).into());
+    prefs::save(app, &prefs);
+}
+
+fn preferred_snap_side(
+    monitor: &MonitorArea,
+    bounds: &WindowBounds,
+    prefs: &prefs::Prefs,
+) -> SnapSide {
+    if let Some(saved) = prefs
+        .monitor_positions
+        .get(&monitor.key)
+        .and_then(|placement| placement.mini_side.as_deref())
+        .and_then(snap_side_from_key)
+    {
+        return saved;
+    }
+
+    let monitor_mid = monitor.x + monitor.width as i32 / 2;
+    let pet_mid = bounds.x + bounds.width as i32 / 2;
+    if pet_mid >= monitor_mid {
+        SnapSide::Right
+    } else {
+        SnapSide::Left
+    }
+}
+
+/// Exit mini mode: restore position, emit idle state, sync hit window.
+/// Returns true if the pet was in mini mode and was restored.
+pub fn do_exit_mini(app: &AppHandle) -> bool {
+    let Some(prefs_state) = app.try_state::<SharedPrefs>() else {
+        return false;
+    };
+    let monitor_key = get_pet_bounds(app)
+        .and_then(|bounds| windows::monitor_for_bounds(app, &bounds))
+        .map(|monitor| monitor.key);
+    let (was_mini, restore_x, restore_y) = {
+        let mut p = prefs_state.lock_or_recover();
+        if !p.mini_mode {
+            return false;
+        }
+        p.mini_mode = false;
+        let restore = monitor_key
+            .as_ref()
+            .and_then(|key| p.monitor_positions.get(key))
+            .map(|placement| (placement.x, placement.y))
+            .unwrap_or((p.pre_mini_x, p.pre_mini_y));
+        prefs::save(app, &p);
+        (true, restore.0, restore.1)
+    };
+    if !was_mini {
+        return false;
+    }
+    if let Some(pet) = app.get_webview_window("pet") {
+        if let Some(prefs_state) = app.try_state::<SharedPrefs>() {
+            let size = prefs_state.lock_or_recover().size.clone();
+            let (w, h) = prefs::size_to_pixels(&size);
+            let _ = pet.set_size(PhysicalSize::new(w, h));
+        }
+        let _ = pet.set_position(PhysicalPosition::new(restore_x, restore_y));
+    }
+    // Restore the real state from the state machine instead of hardcoding idle
+    let (resolved, svg) = if let Some(state) = app.try_state::<SharedState>() {
+        let sm = state.lock_or_recover();
+        let r = sm.resolve_display_state();
+        let s = sm.svg_for_state(&r);
+        (r, s)
+    } else {
+        ("idle".into(), "clyde-idle-follow.svg".into())
+    };
+    emit_state(app, &resolved, &svg);
+    sync_hit(app);
+    true
+}
+
+/// Enter mini mode: save current position, animate to edge, emit mini state.
+/// Returns true if mini mode was entered.
+pub fn do_enter_mini(app: &AppHandle) -> bool {
+    let Some(prefs_state) = app.try_state::<SharedPrefs>() else {
+        return false;
+    };
+    let bounds = match get_pet_bounds(app) {
+        Some(bounds) => bounds,
+        None => return false,
+    };
+    let monitor = match windows::monitor_for_bounds(app, &bounds) {
+        Some(monitor) => monitor,
+        None => return false,
+    };
+
+    // Determine target X: from edge snap (left or right), or default to right edge
+    let (side, hidden_x) = if let Some(snap) = edge_snap_for_bounds(app, &bounds) {
+        let mini_snap = EdgeSnap {
+            monitor: snap.monitor,
+            width: MINI_WINDOW_DIMENSION,
+            side: snap.side,
+        };
+        (mini_snap.side, mini_snap.hidden_x())
+    } else {
+        // Not near any edge (triggered from tray/context menu) — use preferred side or default to right
+        let side = {
+            let prefs = prefs_state.lock_or_recover();
+            preferred_snap_side(&monitor, &bounds, &prefs)
+        };
+        let snap = EdgeSnap {
+            monitor: monitor.clone(),
+            width: MINI_WINDOW_DIMENSION,
+            side,
+        };
+        (snap.side, snap.hidden_x())
+    };
+
+    {
+        let mut p = prefs_state.lock_or_recover();
+        p.pre_mini_x = bounds.x;
+        p.pre_mini_y = bounds.y;
+        p.mini_mode = true;
+        let placement = p.monitor_positions.entry(monitor.key.clone()).or_default();
+        placement.x = bounds.x;
+        placement.y = bounds.y;
+        placement.mini_side = Some(snap_side_key(side).into());
+        prefs::save(app, &p);
+    }
+
+    if let Some(pet) = app.get_webview_window("pet") {
+        let _ = pet.set_size(PhysicalSize::new(
+            MINI_WINDOW_DIMENSION,
+            MINI_WINDOW_DIMENSION,
+        ));
+    }
+    emit_state(app, "mini-idle", "clyde-mini-enter.svg");
+    // Suppress peek until the mouse leaves the pet vicinity. Without this,
+    // the mouse (still at the drag-release position) triggers peek_in right
+    // after the entry animation, pulling the pet 25px away from the edge.
+    suppress_peek_until_mouse_exit(app);
+    // animate_to_x automatically syncs hit window when animation completes
+    animate_to_x(app, hidden_x, 300);
+    true
+}
+
+/// Animate window with parabolic arc (jump transition).
+#[allow(dead_code)]
+pub fn animate_parabola(
+    app: &AppHandle,
+    target_x: i32,
+    target_y: i32,
+    peak_height: i32,
+    duration_ms: u64,
+) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(pet) = app.get_webview_window("pet") {
+            let start_pos = pet.outer_position().unwrap_or_default();
+            let sx = start_pos.x as f64;
+            let sy = start_pos.y as f64;
+            let tx = target_x as f64;
+            let ty = target_y as f64;
+            let steps = (duration_ms / 16).max(1);
+            let mut tick_interval = tokio::time::interval(Duration::from_millis(16));
+            for i in 1..=steps {
+                tick_interval.tick().await;
+                let t = i as f64 / steps as f64;
+                let eased = t * (2.0 - t);
+                let x = sx + (tx - sx) * eased;
+                // Parabolic arc: -4 * peak * t * (t - 1)
+                let arc = -4.0 * peak_height as f64 * t * (t - 1.0);
+                let y = sy + (ty - sy) * eased - arc;
+                let _ = pet.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+            }
+        }
+        sync_hit(&app);
+    });
+}
+
+/// Peek in: slide to peek position (absolute, not relative — prevents drift)
+pub fn peek_in(app: &AppHandle) {
+    if let Some(snap) = should_snap_to_edge(app) {
+        let offset = peek_offset(app);
+        let target_x = match snap.side {
+            SnapSide::Right => snap.hidden_x() - offset,
+            SnapSide::Left => snap.hidden_x() + offset,
+        };
+        animate_to_x(app, target_x, 200);
+    }
+}
+
+/// Peek out: slide back to hidden position
+pub fn peek_out(app: &AppHandle) {
+    if let Some(snap) = should_snap_to_edge(app) {
+        animate_to_x(app, snap.hidden_x(), 200);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snap_tolerance_scales_with_pet_width() {
+        assert_eq!(snap_tolerance_for_width(120), 12);
+        assert_eq!(snap_tolerance_for_width(200), 20);
+        assert_eq!(snap_tolerance_for_width(280), 28);
+        assert_eq!(snap_tolerance_for_width(360), 36);
+    }
+}
+
+/// Animate window to target X in steps (ease-out quadratic).
+/// Bumps the generation counter so any in-flight animation stops.
+/// Syncs hit window only if this animation was not superseded.
+pub fn animate_to_x(app: &AppHandle, target_x: i32, duration_ms: u64) {
+    // Bump generation — any older animation will see its gen is stale and stop
+    let gen = app.try_state::<AnimationGeneration>().map(|g| {
+        let new = g.fetch_add(1, Ordering::SeqCst) + 1;
+        (g.inner().clone(), new)
+    });
+
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let (gen_arc, my_gen) = match gen {
+            Some(pair) => pair,
+            None => {
+                sync_hit(&app);
+                return;
+            }
+        };
+
+        if let Some(pet) = app.get_webview_window("pet") {
+            let start_pos = pet.outer_position().unwrap_or_default();
+            let start_x = start_pos.x;
+            let start_y = start_pos.y;
+            if start_x == target_x {
+                sync_hit(&app);
+                return;
+            }
+
+            let steps = (duration_ms / 16).max(1);
+            let mut interval = tokio::time::interval(Duration::from_millis(16));
+            for i in 1..=steps {
+                interval.tick().await;
+                if gen_arc.load(Ordering::SeqCst) != my_gen {
+                    return; // superseded by a newer animation
+                }
+                let t = i as f64 / steps as f64;
+                let eased = t * (2.0 - t); // ease-out quad
+                let x = (start_x as f64 + (target_x - start_x) as f64 * eased).round() as i32;
+                let _ = pet.set_position(PhysicalPosition::new(x, start_y));
+            }
+        }
+        if gen_arc.load(Ordering::SeqCst) == my_gen {
+            sync_hit(&app);
+        }
+    });
+}

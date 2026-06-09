@@ -1,0 +1,415 @@
+use crate::state_machine::SharedState;
+use crate::util::MutexExt;
+use std::collections::HashMap;
+use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::path::PathBuf;
+use std::time::Duration;
+use tauri::AppHandle;
+
+const POLL_INTERVAL_MS: u64 = 1500;
+
+/// Polls ~/.codex/sessions/ for new events in JSONL files.
+/// Codex stores sessions in nested date directories: sessions/YYYY/MM/DD/*.jsonl
+/// Runs on a dedicated OS thread to avoid blocking the tokio runtime with
+/// synchronous file I/O (read_dir, File::open, read_to_string).
+pub fn start_codex_monitor(app: AppHandle, state: SharedState) {
+    let _ = std::thread::Builder::new()
+        .name("codex-monitor".into())
+        .spawn(move || {
+            let codex_roots = codex_session_roots();
+            if codex_roots.is_empty() {
+                return;
+            }
+            let mut known_files: HashMap<PathBuf, u64> = HashMap::new();
+            let watched = codex_roots
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("Clyde: codex monitor started, watching {watched}");
+
+            loop {
+                std::thread::sleep(Duration::from_millis(POLL_INTERVAL_MS));
+                for codex_dir in &codex_roots {
+                    scan_codex_root(&app, &state, &mut known_files, codex_dir);
+                }
+
+                // Clean up entries for files that no longer exist
+                known_files.retain(|path, _| path.exists());
+            }
+        });
+}
+
+fn scan_codex_root(
+    app: &AppHandle,
+    state: &SharedState,
+    known_files: &mut HashMap<PathBuf, u64>,
+    codex_dir: &std::path::Path,
+) {
+    if !codex_dir.exists() {
+        return;
+    }
+
+    // Scan nested date directories: sessions/YYYY/MM/DD/*.jsonl
+    let jsonl_files = find_codex_jsonl_files(codex_dir);
+
+    for path in jsonl_files {
+        let file = match std::fs::File::open(&path) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let file_len = match file.metadata() {
+            Ok(m) => m.len(),
+            Err(_) => continue,
+        };
+        // Detect file truncation/rotation: if file shrank, restart from beginning
+        let stored_offset = known_files.get(&path).copied();
+        let first_time = stored_offset.is_none();
+        let offset = match stored_offset {
+            Some(prev) if file_len < prev => 0, // file truncated, restart
+            Some(prev) => prev,
+            None => 0, // First time: read from start to detect current state
+        };
+        if file_len <= offset {
+            known_files.insert(path.clone(), file_len);
+            continue;
+        }
+
+        let mut reader = BufReader::new(file);
+        if reader.seek(SeekFrom::Start(offset)).is_err() {
+            continue;
+        }
+        let mut new_content = String::new();
+        if reader.read_to_string(&mut new_content).is_err() {
+            continue;
+        }
+        let new_offset = file_len;
+        known_files.insert(path.clone(), new_offset);
+
+        let session_id = format!(
+            "codex-{}",
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+        );
+
+        if first_time {
+            // First time seeing this file: only apply the last known state
+            // (avoids replaying entire session history as rapid state changes)
+            let mut last_state: Option<&str> = None;
+            let mut ended = false;
+            for line in new_content.lines() {
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+                    if is_codex_session_end(&event) {
+                        ended = true;
+                    }
+                    if let Some(s) = map_codex_event(&event) {
+                        last_state = Some(s);
+                    }
+                }
+            }
+            if !ended {
+                if let Some(state_str) = last_state {
+                    codex_update_and_emit(app, state, &session_id, state_str, "monitor");
+                }
+            }
+        } else {
+            // Incremental: process each new line
+            for line in new_content.lines() {
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(line) {
+                    if let Some(end_event) = codex_session_end_event(&event) {
+                        if end_event == "task_complete" {
+                            codex_complete_and_emit(app, state, &session_id);
+                        } else {
+                            codex_update_and_emit(app, state, &session_id, "idle", "SessionEnd");
+                        }
+                        continue;
+                    }
+
+                    let event_type = event["type"].as_str().unwrap_or("");
+                    if let Some(state_str) = map_codex_event(&event) {
+                        codex_update_and_emit(app, state, &session_id, state_str, event_type);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Update state machine and emit — same as `update_session_and_emit` but
+/// atomically sets `agent_id = "Codex"` in the same lock to avoid the default
+/// "claude-code" label from `SessionEntry::new()`.
+fn codex_update_and_emit(
+    app: &AppHandle,
+    state: &SharedState,
+    session_id: &str,
+    state_str: &str,
+    event: &str,
+) {
+    let (resolved, svg) = {
+        let mut sm = state.lock_or_recover();
+        if event == "SessionEnd" {
+            sm.handle_session_end(session_id);
+        } else {
+            sm.update_session_state(session_id, state_str, event);
+        }
+        // Set agent_id atomically — before releasing the lock
+        if let Some(entry) = sm.sessions.get_mut(session_id) {
+            entry.agent_id = "Codex".into();
+        }
+        let resolved = sm.resolve_display_state();
+        let svg = sm.svg_for_state(&resolved);
+        sm.current_state = resolved.clone();
+        sm.current_svg = svg.clone();
+        (resolved, svg)
+    };
+    crate::emit_state(app, &resolved, &svg);
+    crate::sync_hit(app);
+}
+
+fn codex_complete_and_emit(app: &AppHandle, state: &SharedState, session_id: &str) {
+    let svg = "clyde-happy.svg".to_string();
+    {
+        let mut sm = state.lock_or_recover();
+        sm.handle_session_end(session_id);
+        sm.current_state = "attention".into();
+        sm.current_svg = svg.clone();
+    }
+    crate::emit_state(app, "attention", &svg);
+    crate::sync_hit(app);
+    schedule_codex_completion_dismiss(app.clone(), state.clone());
+}
+
+fn schedule_codex_completion_dismiss(app: AppHandle, state: SharedState) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        let dismissed = {
+            let mut sm = state.lock_or_recover();
+            sm.dismiss_transient_state()
+        };
+        if let Some((resolved, svg)) = dismissed {
+            crate::emit_state(&app, &resolved, &svg);
+            crate::sync_hit(&app);
+        }
+    });
+}
+
+/// Map a Codex JSONL entry to a Clyde animation state.
+///
+/// Codex JSONL format (nested structure):
+/// - `{type: "event_msg", payload: {type: "task_started"}}` → thinking
+/// - `{type: "event_msg", payload: {type: "user_message"}}` → thinking
+/// - `{type: "event_msg", payload: {type: "agent_message"}}` → idle
+/// - `{type: "response_item", payload: {type: "function_call"}}` → working
+/// - `{type: "response_item", payload: {type: "function_call_output"}}` → working
+/// - `{type: "response_item", payload: {type: "message", role: "assistant"}}` → idle (if end_turn)
+/// - `{type: "event_msg", payload: {type: "task_complete"}}` → session end
+fn map_codex_event(event: &serde_json::Value) -> Option<&'static str> {
+    let top_type = event["type"].as_str()?;
+
+    match top_type {
+        "event_msg" => {
+            let inner_type = event["payload"]["type"].as_str()?;
+            match inner_type {
+                "task_started" | "user_message" => Some("thinking"),
+                "agent_message" => Some("idle"),
+                // task_completed/task_cancelled handled separately as session end
+                _ => None,
+            }
+        }
+        "response_item" => {
+            let payload_type = event["payload"]["type"].as_str()?;
+            match payload_type {
+                "function_call" => Some("working"),
+                "function_call_output" => Some("working"),
+                "reasoning" => Some("thinking"),
+                "message" => {
+                    let role = event["payload"]["role"].as_str().unwrap_or("");
+                    if role == "assistant" {
+                        // Check if this is a final response (has output_text content)
+                        if let Some(content) = event["payload"]["content"].as_array() {
+                            if content
+                                .iter()
+                                .any(|c| c["type"].as_str() == Some("output_text"))
+                            {
+                                return Some("idle");
+                            }
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Check if a Codex event signals session end.
+fn is_codex_session_end(event: &serde_json::Value) -> bool {
+    codex_session_end_event(event).is_some()
+}
+
+fn codex_session_end_event(event: &serde_json::Value) -> Option<&str> {
+    if event["type"].as_str() != Some("event_msg") {
+        return None;
+    }
+    match event["payload"]["type"].as_str()? {
+        "task_complete" | "task_cancelled" => event["payload"]["type"].as_str(),
+        _ => None,
+    }
+}
+
+fn codex_session_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".codex").join("sessions"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        roots.extend(wsl_codex_roots());
+    }
+    dedup_paths(roots)
+}
+
+fn dedup_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut unique = Vec::new();
+    for path in paths {
+        if !unique.iter().any(|existing| existing == &path) {
+            unique.push(path);
+        }
+    }
+    unique
+}
+
+#[cfg(target_os = "windows")]
+fn wsl_codex_roots() -> Vec<PathBuf> {
+    let output = match std::process::Command::new("wsl.exe")
+        .args(["-l", "-q"])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+
+    let mut roots = Vec::new();
+    for distro in parse_wsl_distros(&output.stdout) {
+        roots.extend(build_wsl_codex_roots_for_distro(&distro));
+    }
+    dedup_paths(roots)
+}
+
+#[cfg(target_os = "windows")]
+fn build_wsl_codex_roots_for_distro(distro: &str) -> Vec<PathBuf> {
+    let output = match std::process::Command::new("wsl.exe")
+        .args(["-d", distro, "--", "sh", "-lc", "printf %s \"$HOME\""])
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+    let home = decode_wsl_stdout(&output.stdout);
+    wsl_unc_codex_paths(distro, home.trim())
+}
+
+fn wsl_unc_codex_paths(distro: &str, home: &str) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(path) = build_wsl_unc_codex_path("wsl$", distro, home) {
+        roots.push(path);
+    }
+    if let Some(path) = build_wsl_unc_codex_path("wsl.localhost", distro, home) {
+        roots.push(path);
+    }
+    dedup_paths(roots)
+}
+
+fn build_wsl_unc_codex_path(host: &str, distro: &str, home: &str) -> Option<PathBuf> {
+    let trimmed_host = host.trim();
+    if trimmed_host.is_empty() {
+        return None;
+    }
+    let suffix = wsl_unc_home_suffix(distro, home)?;
+    Some(PathBuf::from(format!(r"\\{}\{}", trimmed_host, suffix)))
+}
+
+fn wsl_unc_home_suffix(distro: &str, home: &str) -> Option<String> {
+    let trimmed_distro = distro.trim();
+    let trimmed_home = home.trim();
+    if trimmed_distro.is_empty() || trimmed_home.is_empty() || !trimmed_home.starts_with('/') {
+        return None;
+    }
+
+    let mut suffix = String::from(trimmed_distro);
+    suffix.push('\\');
+    suffix.push_str(
+        trimmed_home
+            .trim_start_matches('/')
+            .replace('/', "\\")
+            .as_str(),
+    );
+    suffix.push_str(r"\.codex\sessions");
+    Some(suffix)
+}
+
+fn parse_wsl_distros(stdout: &[u8]) -> Vec<String> {
+    decode_wsl_stdout(stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(|line| line.trim_start_matches('*').trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn decode_wsl_stdout(stdout: &[u8]) -> String {
+    if stdout.len() >= 2
+        && stdout.len() % 2 == 0
+        && stdout.iter().skip(1).step_by(2).all(|&b| b == 0)
+    {
+        let utf16: Vec<u16> = stdout
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+        return String::from_utf16_lossy(&utf16);
+    }
+    String::from_utf8_lossy(stdout).into_owned()
+}
+
+/// Maximum age (seconds) for a session file to be considered active.
+const ACTIVE_SESSION_MAX_AGE_SECS: u64 = 3600; // 1 hour
+
+/// Find active .jsonl files in the Codex sessions directory.
+/// Codex nests files under date subdirectories: sessions/YYYY/MM/DD/*.jsonl
+/// Only files modified within the last hour are considered active.
+fn find_codex_jsonl_files(base: &std::path::Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    collect_jsonl_recursive(base, &mut files);
+    // Filter to only files modified within the last hour
+    files.retain(|path| {
+        let age = path
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(u64::MAX);
+        age <= ACTIVE_SESSION_MAX_AGE_SECS
+    });
+    files
+}
+
+/// Recursively collect .jsonl files from a directory tree.
+fn collect_jsonl_recursive(dir: &std::path::Path, files: &mut Vec<PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_jsonl_recursive(&path, files);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+}
