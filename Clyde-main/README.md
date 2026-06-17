@@ -1,9 +1,9 @@
 <p align="center">
   <img src="assets/tray-icon.png" width="128" alt="Clyde">
 </p>
-<h1 align="center">Clyde on Desk</h1>
+<h1 align="center">myDoro</h1>
 <p align="center">
-  A lightweight desktop pet that mirrors your AI coding agent in real time
+  A birthday gift to myself, for loving myself and loving life
   <br>
   <a href="README.zh-CN.md">中文版</a>
 </p>
@@ -15,7 +15,9 @@
   <img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-grey" alt="platforms">
 </p>
 
-Clyde sits on your desktop and reflects what your AI coding agent is doing: thinking when you prompt, typing when tools run, juggling subagents, popping permission bubbles, celebrating on completion, and sleeping when you step away.
+myDoro is a birthday gift to myself. It keeps "love yourself, love life" at the center: a small desktop companion that watches my AI coding agents while I work, then occasionally pops out to be playful.
+
+When an agent needs permission during development, myDoro shows a desktop reminder so I can approve or deny it in time. It also reacts to the agent's state: thinking when prompted, typing when tools run, juggling subagents, celebrating completed work, and sleeping quietly when I step away.
 
 Works with **Claude Code**, **Codex CLI**, and **Copilot CLI** — all three can run simultaneously.
 
