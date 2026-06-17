@@ -43,20 +43,20 @@ npm start        # Tauri dev mode with hot-reload
 
 12 animated states driven by real-time agent events:
 
-| Agent Event | Clyde Does | Preview |
+| Agent Event | myDoro Does | Preview |
 |---|---|---|
-| Idle | Follows your cursor (eye tracking + body lean) | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-idle.gif" width="80" /> |
-| UserPromptSubmit | Thinking | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-thinking.gif" width="80" /> |
-| PreToolUse | Typing | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-typing.gif" width="80" /> |
-| 3+ sessions active | Building | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-building.gif" width="80" /> |
-| 1 subagent | Juggling | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-juggling.gif" width="80" /> |
-| 2+ subagents | Conducting | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-conducting.gif" width="80" /> |
-| PostToolUseFailure | Error flash | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-error.gif" width="80" /> |
-| Stop (task complete) | Happy bounce | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-happy.gif" width="80" /> |
-| Notification | Alert jump | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-notification.gif" width="80" /> |
-| PreCompact | Sweeping | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-sweeping.gif" width="80" /> |
-| WorktreeCreate | Carrying box | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-carrying.gif" width="80" /> |
-| 60s no activity | Yawn → doze → collapse → sleep | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-sleeping.gif" width="80" /> |
+| Idle | Follows your cursor (eye tracking + body lean) | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-idle.png" width="80" /> |
+| UserPromptSubmit | Thinking | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-thinking.png" width="80" /> |
+| PreToolUse | Typing | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-typing.png" width="80" /> |
+| 3+ sessions active | Building | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-building.png" width="80" /> |
+| 1 subagent | Juggling | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-juggling.png" width="80" /> |
+| 2+ subagents | Conducting | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-conducting.png" width="80" /> |
+| PostToolUseFailure | Error flash | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-error.png" width="80" /> |
+| Stop (task complete) | Happy bounce | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-happy.png" width="80" /> |
+| Notification | Alert jump | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-notification.png" width="80" /> |
+| PreCompact | Sweeping | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-sweeping.png" width="80" /> |
+| WorktreeCreate | Carrying box | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-carrying.png" width="80" /> |
+| 60s no activity | Yawn → doze → collapse → sleep | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-sleeping.png" width="80" /> |
 
 ### Interaction
 

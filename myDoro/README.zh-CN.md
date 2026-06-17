@@ -43,20 +43,20 @@ npm start        # Tauri 开发模式，前端热更新
 
 12 种动画状态，由实时 Agent 事件驱动：
 
-| Agent 事件 | Clyde 的反应 | 预览 |
+| Agent 事件 | myDoro 的反应 | 预览 |
 |---|---|---|
-| 空闲 | 眼球跟随鼠标，身体微倾 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-idle.gif" width="80" /> |
-| 提交提示词 | 思考 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-thinking.gif" width="80" /> |
-| 工具执行中 | 打字 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-typing.gif" width="80" /> |
-| 3+ 个会话活跃 | 建造 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-building.gif" width="80" /> |
-| 1 个子代理 | 杂耍 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-juggling.gif" width="80" /> |
-| 2+ 个子代理 | 指挥 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-conducting.gif" width="80" /> |
-| 工具执行失败 | 报错闪烁 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-error.gif" width="80" /> |
-| 任务完成 | 开心弹跳 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-happy.gif" width="80" /> |
-| 通知 | 惊跳 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-notification.gif" width="80" /> |
-| 上下文压缩 | 扫地 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-sweeping.gif" width="80" /> |
-| 创建 Worktree | 搬箱子 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-carrying.gif" width="80" /> |
-| 60 秒无活动 | 打哈欠 → 打盹 → 倒下 → 睡觉 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/assets/gif/clawd-sleeping.gif" width="80" /> |
+| 空闲 | 眼球跟随鼠标，身体微倾 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-idle.png" width="80" /> |
+| 提交提示词 | 思考 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-thinking.png" width="80" /> |
+| 工具执行中 | 打字 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-typing.png" width="80" /> |
+| 3+ 个会话活跃 | 建造 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-building.png" width="80" /> |
+| 1 个子代理 | 杂耍 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-juggling.png" width="80" /> |
+| 2+ 个子代理 | 指挥 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-conducting.png" width="80" /> |
+| 工具执行失败 | 报错闪烁 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-error.png" width="80" /> |
+| 任务完成 | 开心弹跳 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-happy.png" width="80" /> |
+| 通知 | 惊跳 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-notification.png" width="80" /> |
+| 上下文压缩 | 扫地 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-sweeping.png" width="80" /> |
+| 创建 Worktree | 搬箱子 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-carrying.png" width="80" /> |
+| 60 秒无活动 | 打哈欠 → 打盹 → 倒下 → 睡觉 | <img src="https://raw.githubusercontent.com/lezibo/myDoro/main/myDoro/doroPic/previews/doro-sleeping.png" width="80" /> |
 
 ### 交互
 
