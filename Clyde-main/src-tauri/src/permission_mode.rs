@@ -186,6 +186,7 @@ fn trigger_mode_notice(app: &AppHandle, _session_id: &str, mode: &PermissionMode
         tool_input: serde_json::Value::Null,
         suggestions: vec![],
         session_id: _session_id.to_string(),
+        lang: lang.to_string(),
         agent_label: display.agent_label,
         session_summary: display.summary,
         session_project: display.project,

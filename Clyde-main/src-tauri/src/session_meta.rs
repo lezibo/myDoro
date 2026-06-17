@@ -164,6 +164,15 @@ pub(crate) fn extract_tool_cwd(tool_input: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+pub(crate) fn resolve_latest_session_summary(session_id: &str, agent: &str) -> Option<String> {
+    let normalized = agent.trim().to_ascii_lowercase();
+    if normalized.contains("codex") {
+        resolve_latest_codex_session_summary(session_id)
+    } else {
+        resolve_latest_claude_session_summary(session_id)
+    }
+}
+
 fn resolve_session_meta(session_id: &str, agent: &str) -> Option<ResolvedSessionMeta> {
     let normalized = agent.trim().to_ascii_lowercase();
     if normalized.contains("codex") {
@@ -195,20 +204,9 @@ fn resolve_claude_session_meta(session_id: &str) -> Option<ResolvedSessionMeta> 
                 .unwrap_or_default()
                 .to_string();
         }
-        if meta.summary.is_empty()
-            && entry.get("type").and_then(|value| value.as_str()) == Some("user")
-        {
-            if let Some(content) = entry
-                .get("message")
-                .and_then(|message| message.get("content"))
-                .and_then(extract_message_text)
-            {
-                meta.summary = clean_resume_summary(&content);
-            }
-        }
         if meta.summary.is_empty() {
-            if let Some(last_prompt) = entry.get("lastPrompt").and_then(|value| value.as_str()) {
-                meta.summary = clean_resume_summary(last_prompt);
+            if let Some(summary) = claude_entry_summary(&entry) {
+                meta.summary = summary;
             }
         }
         if !meta.summary.is_empty() && !meta.cwd.is_empty() {
@@ -221,6 +219,28 @@ fn resolve_claude_session_meta(session_id: &str) -> Option<ResolvedSessionMeta> 
     } else {
         Some(meta)
     }
+}
+
+fn resolve_latest_claude_session_summary(session_id: &str) -> Option<String> {
+    let base = dirs::home_dir()?.join(".claude").join("projects");
+    let hint = session_id
+        .strip_prefix("claude-monitor-")
+        .unwrap_or(session_id);
+    let path = find_claude_session_file(&base, hint)?;
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+
+    let mut latest = String::new();
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(summary) = claude_entry_summary(&entry) {
+            latest = summary;
+        }
+    }
+
+    (!latest.is_empty()).then_some(latest)
 }
 
 fn resolve_codex_session_meta(session_id: &str) -> Option<ResolvedSessionMeta> {
@@ -246,44 +266,9 @@ fn resolve_codex_session_meta(session_id: &str) -> Option<ResolvedSessionMeta> {
                 .unwrap_or_default()
                 .to_string();
         }
-        if meta.summary.is_empty()
-            && entry.get("type").and_then(|value| value.as_str()) == Some("event_msg")
-            && entry
-                .get("payload")
-                .and_then(|payload| payload.get("type"))
-                .and_then(|value| value.as_str())
-                == Some("user_message")
-        {
-            if let Some(message) = entry
-                .get("payload")
-                .and_then(|payload| payload.get("message"))
-                .and_then(|value| value.as_str())
-            {
-                meta.summary = clean_resume_summary(message);
-            }
-        }
-        if meta.summary.is_empty()
-            && entry.get("type").and_then(|value| value.as_str()) == Some("response_item")
-            && entry
-                .get("payload")
-                .and_then(|payload| payload.get("type"))
-                .and_then(|value| value.as_str())
-                == Some("message")
-            && entry
-                .get("payload")
-                .and_then(|payload| payload.get("role"))
-                .and_then(|value| value.as_str())
-                == Some("user")
-        {
-            if let Some(content) = entry
-                .get("payload")
-                .and_then(|payload| payload.get("content"))
-                .and_then(extract_message_text)
-            {
-                let cleaned = clean_resume_summary(&content);
-                if !looks_like_system_prompt(&cleaned) {
-                    meta.summary = cleaned;
-                }
+        if meta.summary.is_empty() {
+            if let Some(summary) = codex_entry_summary(&entry) {
+                meta.summary = summary;
             }
         }
         if !meta.summary.is_empty() && !meta.cwd.is_empty() {
@@ -296,6 +281,89 @@ fn resolve_codex_session_meta(session_id: &str) -> Option<ResolvedSessionMeta> {
     } else {
         Some(meta)
     }
+}
+
+fn resolve_latest_codex_session_summary(session_id: &str) -> Option<String> {
+    let base = dirs::home_dir()?.join(".codex").join("sessions");
+    let hint = session_id.strip_prefix("codex-").unwrap_or(session_id);
+    let path = find_codex_session_file(&base, hint)?;
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+
+    let mut latest = String::new();
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(summary) = codex_entry_summary(&entry) {
+            latest = summary;
+        }
+    }
+
+    (!latest.is_empty()).then_some(latest)
+}
+
+fn claude_entry_summary(entry: &Value) -> Option<String> {
+    if entry.get("type").and_then(|value| value.as_str()) == Some("user") {
+        if let Some(content) = entry
+            .get("message")
+            .and_then(|message| message.get("content"))
+            .and_then(extract_message_text)
+        {
+            return cleaned_non_system_summary(&content);
+        }
+    }
+
+    entry
+        .get("lastPrompt")
+        .and_then(|value| value.as_str())
+        .and_then(cleaned_non_system_summary)
+}
+
+fn codex_entry_summary(entry: &Value) -> Option<String> {
+    if entry.get("type").and_then(|value| value.as_str()) == Some("event_msg")
+        && entry
+            .get("payload")
+            .and_then(|payload| payload.get("type"))
+            .and_then(|value| value.as_str())
+            == Some("user_message")
+    {
+        if let Some(message) = entry
+            .get("payload")
+            .and_then(|payload| payload.get("message"))
+            .and_then(|value| value.as_str())
+        {
+            return cleaned_non_system_summary(message);
+        }
+    }
+
+    if entry.get("type").and_then(|value| value.as_str()) == Some("response_item")
+        && entry
+            .get("payload")
+            .and_then(|payload| payload.get("type"))
+            .and_then(|value| value.as_str())
+            == Some("message")
+        && entry
+            .get("payload")
+            .and_then(|payload| payload.get("role"))
+            .and_then(|value| value.as_str())
+            == Some("user")
+    {
+        if let Some(content) = entry
+            .get("payload")
+            .and_then(|payload| payload.get("content"))
+            .and_then(extract_message_text)
+        {
+            return cleaned_non_system_summary(&content);
+        }
+    }
+
+    None
+}
+
+fn cleaned_non_system_summary(raw: &str) -> Option<String> {
+    let cleaned = clean_resume_summary(raw);
+    (!cleaned.is_empty() && !looks_like_system_prompt(&cleaned)).then_some(cleaned)
 }
 
 fn extract_message_text(value: &Value) -> Option<String> {
@@ -471,6 +539,48 @@ mod tests {
         assert_eq!(
             short_session_id("codex-rollout-2026-01-25-484ad236f061"),
             "484ad2"
+        );
+    }
+
+    #[test]
+    fn extracts_claude_user_entry_summary() {
+        let entry = serde_json::json!({
+            "type": "user",
+            "message": {
+                "content": [
+                    { "type": "text", "text": "当前这轮需要读取配置" }
+                ]
+            }
+        });
+
+        assert_eq!(
+            claude_entry_summary(&entry).as_deref(),
+            Some("当前这轮需要读取配置")
+        );
+    }
+
+    #[test]
+    fn skips_codex_system_prompt_summary() {
+        let system_entry = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": "# AGENTS.md instructions\n<INSTRUCTIONS>"
+            }
+        });
+        let user_entry = serde_json::json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "user_message",
+                "message": "请检查当前权限弹窗标题"
+            }
+        });
+
+        assert_eq!(codex_entry_summary(&system_entry), None);
+        assert_eq!(
+            codex_entry_summary(&user_entry).as_deref(),
+            Some("请检查当前权限弹窗标题")
         );
     }
 }

@@ -23,6 +23,7 @@ pub struct BubbleData {
     pub tool_input: serde_json::Value,
     pub suggestions: Vec<serde_json::Value>,
     pub session_id: String,
+    pub lang: String,
     pub agent_label: String,
     pub session_summary: String,
     pub session_project: String,

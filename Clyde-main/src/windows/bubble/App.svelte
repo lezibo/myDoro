@@ -145,6 +145,7 @@
       toolInput={bubbleData.tool_input ?? {}}
       suggestions={bubbleData.suggestions ?? []}
       sessionId={bubbleData.session_id}
+      lang={bubbleData.lang ?? bubbleData.update_lang ?? 'en'}
       agentLabel={bubbleData.agent_label ?? 'Claude'}
       sessionSummary={bubbleData.session_summary ?? ''}
       sessionProject={bubbleData.session_project ?? ''}
@@ -160,7 +161,6 @@
       updateVersion={bubbleData.update_version ?? ''}
       updateUrl={bubbleData.update_url ?? ''}
       updateNotes={bubbleData.update_notes ?? ''}
-      updateLang={bubbleData.update_lang ?? 'en'}
     />
   {:else}
     <div class="loading">Loading...</div>

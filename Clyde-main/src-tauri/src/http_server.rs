@@ -292,7 +292,9 @@ fn extract_request_display_meta(
         fallback_cwd.as_deref(),
     );
 
-    let raw_session_summary = session_summary_override.unwrap_or(display.summary);
+    let raw_session_summary = session_summary_override
+        .or_else(|| session_meta::resolve_latest_session_summary(&session_id, &fallback_agent))
+        .unwrap_or(display.summary);
 
     RequestDisplayMeta {
         session_id,
@@ -309,6 +311,12 @@ fn default_decision_for(bubble_data: &permission::BubbleData) -> HookDecision {
     } else {
         HookDecision::Permission(PermDecision::Deny)
     }
+}
+
+fn current_lang(app: &AppHandle) -> String {
+    app.try_state::<crate::prefs::SharedPrefs>()
+        .map(|prefs| prefs.lock_or_recover().lang.clone())
+        .unwrap_or_else(|| "en".to_string())
 }
 
 fn request_is_elicitation(approval_queue: &ApprovalQueue, id: &str) -> bool {
@@ -559,6 +567,7 @@ async fn post_permission(
         tool_input,
         suggestions,
         session_id: display.session_id,
+        lang: current_lang(&ctx.app),
         agent_label: display.agent_label,
         session_summary: display.session_summary,
         session_project: display.session_project,
@@ -632,6 +641,7 @@ async fn post_elicitation(
         tool_input,
         suggestions: vec![],
         session_id: display.session_id,
+        lang: current_lang(&ctx.app),
         agent_label: display.agent_label,
         session_summary: display.session_summary,
         session_project: display.session_project,

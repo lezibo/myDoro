@@ -42,6 +42,7 @@
     toolInput = {},
     suggestions = [],
     sessionId,
+    lang = 'en',
     agentLabel = 'Claude',
     sessionSummary = '',
     sessionProject = '',
@@ -57,7 +58,6 @@
     updateVersion = '',
     updateUrl = '',
     updateNotes = '',
-    updateLang = 'en',
   }: {
     id: string;
     windowKind?: string;
@@ -65,6 +65,7 @@
     toolInput?: Record<string, unknown>;
     suggestions?: unknown[];
     sessionId: string;
+    lang?: string;
     agentLabel?: string;
     sessionSummary?: string;
     sessionProject?: string;
@@ -80,7 +81,6 @@
     updateVersion?: string;
     updateUrl?: string;
     updateNotes?: string;
-    updateLang?: string;
   } = $props();
 
   let elicitationValues = $state<Record<string, unknown>>({});
@@ -117,6 +117,114 @@
     WebSearch: 'WEB',
     NotebookEdit: 'NB',
   };
+
+  const I18N: Record<string, Record<string, string>> = {
+    en: {
+      applySuggestedPermissionChange: 'Apply the suggested permission change',
+      applySuggestedPermission: 'Apply suggested permission',
+      applySuggestedRule: 'Apply the suggested rule',
+      approveOnlyThisRequest: 'Approve only this request',
+      allowOnce: 'Allow Once',
+      allowTool: 'Allow {agent} to use {tool}?',
+      allowCommand: 'Allow {agent} to run this command?',
+      blockThisRequest: 'Block this request',
+      cancel: 'Cancel',
+      chooseReply: 'Choose a reply here or jump back to the terminal session.',
+      closeWithoutAnswering: 'Close without answering',
+      continueInBrowser: 'Continue in the browser',
+      createPersistentAllowRule: 'Create a persistent allow rule',
+      decline: 'Decline',
+      deny: 'Deny',
+      dismiss: 'Dismiss',
+      futureEditRequestsAutoApproved: 'Future edit requests can be approved automatically',
+      goDownload: 'Download',
+      mode: 'Mode',
+      modeChanged: 'Mode Changed',
+      needsReply: '{agent} Needs Reply',
+      no: 'No',
+      openLink: 'Open Link',
+      openTerminal: 'Open Terminal',
+      options: 'Options',
+      permissionRequest: 'Permission Request',
+      prompt: 'Prompt',
+      reason: 'Reason',
+      refuseThisPrompt: 'Refuse this prompt',
+      remember: 'Remember',
+      reply: 'Reply',
+      replyRequired: 'Reply Required',
+      replyThereInstead: 'Reply there instead',
+      required: 'Required',
+      returnAnswerToAgent: 'Return this answer to {agent}',
+      rule: 'Rule',
+      sendReply: 'Send Reply',
+      server: 'Server',
+      skipVersion: 'Skip',
+      switchToAcceptEdits: 'Switch to Accept Edits',
+      terminal: 'terminal',
+      thisOnlyAffectsCurrentRequest: 'This only affects the current request.',
+      thisTool: 'this tool',
+      updateAvailable: 'Update Available',
+      wantsAccess: '{agent} Wants Access',
+      yes: 'Yes',
+    },
+    zh: {
+      applySuggestedPermissionChange: '应用建议的权限变更',
+      applySuggestedPermission: '应用权限建议',
+      applySuggestedRule: '应用建议规则',
+      approveOnlyThisRequest: '仅批准本次请求',
+      allowOnce: '允许一次',
+      allowTool: '允许 {agent} 使用 {tool} 吗？',
+      allowCommand: '允许 {agent} 运行这条命令吗？',
+      blockThisRequest: '阻止本次请求',
+      cancel: '取消',
+      chooseReply: '在这里选择回复，或回到终端会话处理。',
+      closeWithoutAnswering: '关闭且不回答',
+      continueInBrowser: '在浏览器中继续',
+      createPersistentAllowRule: '创建持久允许规则',
+      decline: '拒绝',
+      deny: '拒绝',
+      dismiss: '关闭',
+      futureEditRequestsAutoApproved: '后续编辑请求可以自动批准',
+      goDownload: '前往下载',
+      mode: '模式',
+      modeChanged: '模式已变更',
+      needsReply: '{agent} 需要回复',
+      no: '否',
+      openLink: '打开链接',
+      openTerminal: '打开终端',
+      options: '选项',
+      permissionRequest: '权限申请',
+      prompt: '提示',
+      reason: '原因',
+      refuseThisPrompt: '拒绝这个提示',
+      remember: '记住',
+      reply: '回复',
+      replyRequired: '需要回复',
+      replyThereInstead: '改在终端回复',
+      required: '必填',
+      returnAnswerToAgent: '将此回答返回给 {agent}',
+      rule: '规则',
+      sendReply: '发送回复',
+      server: '服务',
+      skipVersion: '跳过此版本',
+      switchToAcceptEdits: '切换到自动编辑',
+      terminal: '终端',
+      thisOnlyAffectsCurrentRequest: '仅影响当前请求。',
+      thisTool: '这个工具',
+      updateAvailable: '发现新版本',
+      wantsAccess: '{agent} 请求访问',
+      yes: '是',
+    },
+  };
+
+  function t(key: string, values: Record<string, string> = {}): string {
+    const table = lang === 'zh' ? I18N.zh : I18N.en;
+    let text = table[key] ?? I18N.en[key] ?? key;
+    for (const [name, value] of Object.entries(values)) {
+      text = text.replaceAll(`{${name}}`, value);
+    }
+    return text;
+  }
 
   $effect(() => {
     if (!isElicitation) return;
@@ -345,9 +453,9 @@
   }
 
   function requestTitle(): string {
-    if (isElicitation) return `${agentLabel} needs a reply`;
-    if (toolName === 'Bash' && commandText) return `Allow ${agentLabel} to run this command?`;
-    return `Allow ${agentLabel} to use ${toolName || 'this tool'}?`;
+    if (isElicitation) return t('needsReply', { agent: agentLabel });
+    if (toolName === 'Bash' && commandText) return t('allowCommand', { agent: agentLabel });
+    return t('allowTool', { agent: agentLabel, tool: toolName || t('thisTool') });
   }
 
   async function allow() {
@@ -394,7 +502,7 @@
     if (typeof sug !== 'object' || sug === null) {
       return {
         title: String(sug),
-        subtitle: 'Apply the suggested permission change',
+        subtitle: t('applySuggestedPermissionChange'),
       };
     }
     const obj = sug as Record<string, unknown>;
@@ -407,27 +515,34 @@
     if (type === 'addRules' && obj.behavior === 'allow') {
       const rule = typeof obj.ruleContent === 'string' ? obj.ruleContent : '';
       return {
-        title: `Always allow matching ${suggestionTool}`,
-        subtitle: rule ? `Rule: ${rule}` : 'Create a persistent allow rule',
+        title: lang === 'zh' ? `始终允许匹配的 ${suggestionTool}` : `Always allow matching ${suggestionTool}`,
+        subtitle: rule ? `${t('rule')}: ${rule}` : t('createPersistentAllowRule'),
       };
     }
     if (type === 'setMode' && obj.mode === 'acceptEdits') {
       return {
-        title: 'Switch to Accept Edits',
-        subtitle: 'Future edit requests can be approved automatically',
+        title: t('switchToAcceptEdits'),
+        subtitle: t('futureEditRequestsAutoApproved'),
       };
     }
     if (type === 'addRules') {
       const behavior = typeof obj.behavior === 'string' ? obj.behavior : 'allow';
       return {
-        title: `${humanizeKey(behavior)} ${suggestionTool}`,
-        subtitle: 'Apply the suggested rule',
+        title: `${permissionBehaviorLabel(behavior)} ${suggestionTool}`,
+        subtitle: t('applySuggestedRule'),
       };
     }
     return {
-      title: 'Apply suggested permission',
-      subtitle: 'Update future permission handling',
+      title: t('applySuggestedPermission'),
+      subtitle: t('applySuggestedPermissionChange'),
     };
+  }
+
+  function permissionBehaviorLabel(behavior: string): string {
+    if (lang !== 'zh') return humanizeKey(behavior);
+    if (behavior === 'allow') return '允许';
+    if (behavior === 'deny') return '拒绝';
+    return humanizeKey(behavior);
   }
 
   async function focusTerminal() {
@@ -459,9 +574,7 @@
     <div class="header bubble-drag-handle">
       <div class="header-copy">
         <span class="eyebrow">Clyde</span>
-        <span class="title">
-          {updateLang === 'zh' ? '发现新版本' : 'Update Available'}
-        </span>
+        <span class="title">{t('updateAvailable')}</span>
       </div>
       <span class="badge badge-update">v{updateVersion}</span>
     </div>
@@ -473,11 +586,11 @@
     {/if}
 
     <div class="actions">
-      <button class="btn btn-primary" onclick={openUpdate} aria-label="Download update">
-        {updateLang === 'zh' ? '前往下载' : 'Download'}
+      <button class="btn btn-primary" onclick={openUpdate} aria-label={t('goDownload')}>
+        {t('goDownload')}
       </button>
-      <button class="btn btn-secondary" onclick={dismissUpdate} aria-label="Dismiss update">
-        {updateLang === 'zh' ? '跳过此版本' : 'Skip'}
+      <button class="btn btn-secondary" onclick={dismissUpdate} aria-label={t('skipVersion')}>
+        {t('skipVersion')}
       </button>
     </div>
   </div>
@@ -487,7 +600,7 @@
     <div class="header bubble-drag-handle">
       <div class="header-copy">
         <span class="eyebrow">{agentLabel}</span>
-        <span class="title">{sessionSummary || 'Mode Changed'}</span>
+        <span class="title">{sessionSummary || t('modeChanged')}</span>
         {#if headerMeta}
           <span class="meta">{headerMeta}</span>
         {/if}
@@ -500,7 +613,7 @@
     </div>
 
     <div class="actions">
-      <button class="btn btn-primary" onclick={dismiss} aria-label="Dismiss">
+      <button class="btn btn-primary" onclick={dismiss} aria-label={t('dismiss')}>
         OK
       </button>
     </div>
@@ -511,10 +624,10 @@
     <div class="header bubble-drag-handle">
       <div class="header-copy">
         <span class="eyebrow">
-          {isElicitation ? `${agentLabel} Needs Reply` : `${agentLabel} Wants Access`}
+          {isElicitation ? t('needsReply', { agent: agentLabel }) : t('wantsAccess', { agent: agentLabel })}
         </span>
         <span class="title">
-          {sessionSummary || (isElicitation ? 'Reply Required' : 'Permission Request')}
+          {sessionSummary || (isElicitation ? t('replyRequired') : t('permissionRequest'))}
         </span>
         {#if headerMeta}
           <span class="meta">{headerMeta}</span>
@@ -527,9 +640,9 @@
       <div class="intent-title">{requestTitle()}</div>
       <div class="intent-copy">
         {#if isElicitation}
-          Choose a reply here or jump back to the terminal session.
+          {t('chooseReply')}
         {:else}
-          This only affects the current request.
+          {t('thisOnlyAffectsCurrentRequest')}
         {/if}
       </div>
     </div>
@@ -543,14 +656,14 @@
           <span class="mini-meta">{cwdLabel}</span>
         {/if}
         {#if elicitationServerName}
-          <span class="mini-meta">Server: {elicitationServerName}</span>
+          <span class="mini-meta">{t('server')}: {elicitationServerName}</span>
         {/if}
       </div>
     {/if}
 
     {#if isElicitation && elicitationMessage}
       <div class="prompt-block">
-        <div class="section-label">Prompt</div>
+        <div class="section-label">{t('prompt')}</div>
         <div class="prompt-copy">{elicitationMessage}</div>
       </div>
     {/if}
@@ -563,20 +676,20 @@
 
     {#if reasonText}
       <div class="reason">
-        <span class="reason-label">Reason</span>
+        <span class="reason-label">{t('reason')}</span>
         <span class="reason-copy">{reasonText}</span>
       </div>
     {/if}
 
     {#if isElicitation}
       {#if singleChoiceField && singleChoiceOptions.length > 0}
-        <div class="section-label">Options</div>
+        <div class="section-label">{t('options')}</div>
         <div class="choice-list">
           {#each singleChoiceOptions as option}
             <button
               class="choice-btn"
               onclick={() => acceptChoice(singleChoiceField, option.value)}
-              aria-label={`Choose ${option.label}`}
+              aria-label={`${t('options')}: ${option.label}`}
             >
               <span class="choice-title">{option.label}</span>
               {#if option.description}
@@ -586,7 +699,7 @@
           {/each}
         </div>
       {:else if elicitationFields.length > 0}
-        <div class="section-label">Reply</div>
+        <div class="section-label">{t('reply')}</div>
         <div class="form-fields">
           {#each elicitationFields as field}
             {@const kind = fieldKind(field)}
@@ -595,7 +708,7 @@
               <span class="field-label">
                 {fieldTitle(field)}
                 {#if field.required}
-                  <span class="field-required">Required</span>
+                  <span class="field-required">{t('required')}</span>
                 {/if}
               </span>
               {#if fieldDescription(field)}
@@ -610,7 +723,7 @@
                       class="choice-pill"
                       type="button"
                       onclick={() => updateFieldValue(field.key, option.value)}
-                      aria-label={`Select ${option.label}`}
+                      aria-label={`${t('options')}: ${option.label}`}
                     >
                       {option.label}
                     </button>
@@ -622,9 +735,9 @@
                   class="toggle-pill"
                   type="button"
                   onclick={() => updateFieldValue(field.key, !Boolean(elicitationValues[field.key]))}
-                  aria-label={`Toggle ${fieldTitle(field)}`}
+                  aria-label={`${fieldTitle(field)}`}
                 >
-                  {Boolean(elicitationValues[field.key]) ? 'Yes' : 'No'}
+                  {Boolean(elicitationValues[field.key]) ? t('yes') : t('no')}
                 </button>
               {:else if kind === 'textarea'}
                 <textarea
@@ -654,9 +767,9 @@
 
       {#if elicitationMode || elicitationUrl}
         <div class="reason">
-          <span class="reason-label">Mode</span>
+          <span class="reason-label">{t('mode')}</span>
           <span class="reason-copy">
-            {elicitationMode || 'terminal'}
+            {elicitationMode || t('terminal')}
             {#if elicitationUrl}
               <span class="inline-link">{elicitationUrl}</span>
             {/if}
@@ -669,55 +782,55 @@
           <button
             class="btn btn-primary btn-stacked"
             onclick={acceptElicitation}
-            aria-label="Submit reply"
+            aria-label={t('sendReply')}
             disabled={!canSubmitElicitation}
           >
-            <span>Send Reply</span>
-            <small>Return this answer to Claude Code</small>
+            <span>{t('sendReply')}</span>
+            <small>{t('returnAnswerToAgent', { agent: agentLabel })}</small>
           </button>
         {/if}
 
         {#if elicitationUrl}
-          <button class="btn btn-secondary btn-stacked" onclick={openElicitationLink} aria-label="Open external link">
-            <span>Open Link</span>
-            <small>Continue in the browser</small>
+          <button class="btn btn-secondary btn-stacked" onclick={openElicitationLink} aria-label={t('openLink')}>
+            <span>{t('openLink')}</span>
+            <small>{t('continueInBrowser')}</small>
           </button>
         {/if}
 
-        <button class="btn btn-secondary btn-stacked" onclick={focusTerminal} aria-label="Focus terminal">
-          <span>Open Terminal</span>
-          <small>Reply there instead</small>
+        <button class="btn btn-secondary btn-stacked" onclick={focusTerminal} aria-label={t('openTerminal')}>
+          <span>{t('openTerminal')}</span>
+          <small>{t('replyThereInstead')}</small>
         </button>
-        <button class="btn btn-secondary btn-stacked" onclick={declineElicitation} aria-label="Decline this request">
-          <span>Decline</span>
-          <small>Refuse this prompt</small>
+        <button class="btn btn-secondary btn-stacked" onclick={declineElicitation} aria-label={t('decline')}>
+          <span>{t('decline')}</span>
+          <small>{t('refuseThisPrompt')}</small>
         </button>
-        <button class="btn btn-secondary btn-stacked" onclick={cancelElicitation} aria-label="Cancel this request">
-          <span>Cancel</span>
-          <small>Close without answering</small>
+        <button class="btn btn-secondary btn-stacked" onclick={cancelElicitation} aria-label={t('cancel')}>
+          <span>{t('cancel')}</span>
+          <small>{t('closeWithoutAnswering')}</small>
         </button>
       </div>
     {:else}
       <div class="actions">
-        <button class="btn btn-primary btn-stacked" onclick={allow} aria-label="Allow this request once">
-          <span>Allow Once</span>
-          <small>Approve only this request</small>
+        <button class="btn btn-primary btn-stacked" onclick={allow} aria-label={t('allowOnce')}>
+          <span>{t('allowOnce')}</span>
+          <small>{t('approveOnlyThisRequest')}</small>
         </button>
-        <button class="btn btn-secondary btn-stacked" onclick={deny} aria-label="Deny this request">
-          <span>Deny</span>
-          <small>Block this request</small>
+        <button class="btn btn-secondary btn-stacked" onclick={deny} aria-label={t('deny')}>
+          <span>{t('deny')}</span>
+          <small>{t('blockThisRequest')}</small>
         </button>
       </div>
 
       {#if suggestions.length > 0}
-        <div class="section-label suggestions-label">Remember</div>
+        <div class="section-label suggestions-label">{t('remember')}</div>
         <div class="suggestions">
           {#each suggestions as sug}
             {@const suggestion = describeSuggestion(sug)}
             <button
               class="suggestion"
               onclick={() => applySuggestion(sug)}
-              aria-label={`Apply suggestion: ${suggestionLabel(sug)}`}
+              aria-label={`${t('applySuggestedPermission')}: ${suggestionLabel(sug)}`}
             >
               <span class="suggestion-title">{suggestion.title}</span>
               <span class="suggestion-subtitle">{suggestion.subtitle}</span>
@@ -731,14 +844,14 @@
 
 <style>
   .bubble {
-    --surface-top: rgba(18, 20, 28, 0.95);
-    --surface-bottom: rgba(9, 11, 17, 0.92);
-    --surface-border: rgba(216, 165, 108, 0.14);
-    --surface-shadow: rgba(5, 7, 12, 0.42);
-    --copy-primary: #f5f1e8;
-    --copy-secondary: #bdb3a3;
-    --accent: #d8a56c;
-    --accent-strong: #f2c48f;
+    --surface-top: rgba(34, 18, 42, 0.95);
+    --surface-bottom: rgba(18, 10, 30, 0.92);
+    --surface-border: rgba(232, 121, 249, 0.18);
+    --surface-shadow: rgba(14, 7, 22, 0.44);
+    --copy-primary: #fff4fb;
+    --copy-secondary: #d9bedf;
+    --accent: #e879f9;
+    --accent-strong: #f0abfc;
     position: relative;
     overflow: hidden;
     background:
@@ -763,7 +876,7 @@
     width: 128px;
     height: 128px;
     border-radius: 999px;
-    background: radial-gradient(circle, rgba(216, 165, 108, 0.26), rgba(216, 165, 108, 0) 72%);
+    background: radial-gradient(circle, rgba(232, 121, 249, 0.3), rgba(232, 121, 249, 0) 72%);
     pointer-events: none;
   }
 
@@ -808,7 +921,7 @@
   .meta {
     font-size: 11px;
     line-height: 1.4;
-    color: rgba(215, 206, 189, 0.84);
+    color: rgba(235, 213, 241, 0.84);
     word-break: break-word;
   }
 
@@ -828,7 +941,7 @@
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.07);
     font-size: 11px;
-    color: #d8cdbc;
+    color: #e7d2ec;
   }
 
   .badge {
@@ -836,11 +949,11 @@
     font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.08em;
-    background: rgba(216, 165, 108, 0.14);
+    background: rgba(232, 121, 249, 0.16);
     color: var(--accent-strong);
     padding: 5px 9px;
     border-radius: 999px;
-    border: 1px solid rgba(216, 165, 108, 0.16);
+    border: 1px solid rgba(232, 121, 249, 0.2);
     white-space: nowrap;
   }
 
@@ -878,14 +991,14 @@
     margin-bottom: 14px;
     padding: 12px 13px;
     border-radius: 12px;
-    background: linear-gradient(180deg, rgba(216, 165, 108, 0.12), rgba(216, 165, 108, 0.04));
-    border: 1px solid rgba(216, 165, 108, 0.12);
+    background: linear-gradient(180deg, rgba(232, 121, 249, 0.14), rgba(192, 132, 252, 0.05));
+    border: 1px solid rgba(232, 121, 249, 0.14);
   }
 
   .intent-title {
     font-size: 13px;
     font-weight: 650;
-    color: #f7ecdc;
+    color: #ffecfb;
     margin-bottom: 5px;
     letter-spacing: -0.015em;
   }
@@ -893,7 +1006,7 @@
   .intent-copy {
     font-size: 11.5px;
     line-height: 1.45;
-    color: #d1c5b4;
+    color: #dbc4e4;
   }
 
   .prompt-block,
@@ -909,7 +1022,7 @@
   .prompt-copy {
     font-size: 12px;
     line-height: 1.55;
-    color: #e7dccd;
+    color: #f0dff4;
     white-space: pre-wrap;
     word-break: break-word;
   }
@@ -919,7 +1032,7 @@
   }
 
   .command-block {
-    border-color: rgba(216, 165, 108, 0.12);
+    border-color: rgba(232, 121, 249, 0.14);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   }
 
@@ -931,7 +1044,7 @@
     font-family: 'Cascadia Code', 'Fira Code', 'SF Mono', 'Consolas', monospace;
     font-size: 11.5px;
     line-height: 1.6;
-    color: #cdc4b7;
+    color: #dfcbe7;
     white-space: pre-wrap;
     word-break: break-all;
     margin: 0;
@@ -962,11 +1075,11 @@
     gap: 4px;
     font-size: 11.5px;
     line-height: 1.45;
-    color: #e8ddce;
+    color: #f1def4;
   }
 
   .inline-link {
-    color: #d9bc95;
+    color: #f0abfc;
     word-break: break-all;
   }
 
@@ -985,7 +1098,7 @@
     border-radius: 11px;
     border: 1px solid rgba(255, 255, 255, 0.065);
     background: rgba(255, 255, 255, 0.045);
-    color: #ddd3c4;
+    color: #ead7ef;
     text-align: left;
     font-size: 12px;
     line-height: 1.4;
@@ -995,9 +1108,9 @@
 
   .choice-btn:hover,
   .suggestion:hover {
-    background: rgba(216, 165, 108, 0.1);
-    border-color: rgba(216, 165, 108, 0.16);
-    color: #f6e7d1;
+    background: rgba(232, 121, 249, 0.12);
+    border-color: rgba(232, 121, 249, 0.2);
+    color: #fff0fb;
     transform: translateY(-1px);
   }
 
@@ -1006,7 +1119,7 @@
     display: block;
     font-size: 12px;
     font-weight: 620;
-    color: #f1e5d4;
+    color: #fae8ff;
     margin-bottom: 3px;
   }
 
@@ -1015,7 +1128,7 @@
     display: block;
     font-size: 10.5px;
     line-height: 1.4;
-    color: #bfb3a0;
+    color: #cdb4d6;
   }
 
   .field {
@@ -1030,12 +1143,12 @@
     gap: 8px;
     font-size: 12px;
     font-weight: 620;
-    color: #f0e6d7;
+    color: #f7e8fb;
   }
 
   .field-required {
     font-size: 10px;
-    color: #d9bc95;
+    color: #f0abfc;
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
@@ -1043,7 +1156,7 @@
   .field-description {
     font-size: 10.5px;
     line-height: 1.45;
-    color: #beb2a0;
+    color: #cab2d4;
   }
 
   .choice-grid {
@@ -1059,7 +1172,7 @@
     border-radius: 999px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.04);
-    color: #ddd3c4;
+    color: #ead7ef;
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
@@ -1068,9 +1181,9 @@
 
   .choice-pill.selected,
   .toggle-pill.selected {
-    background: rgba(216, 165, 108, 0.16);
-    border-color: rgba(216, 165, 108, 0.24);
-    color: #f6e9d7;
+    background: rgba(232, 121, 249, 0.18);
+    border-color: rgba(232, 121, 249, 0.28);
+    color: #ffeffb;
   }
 
   .input {
@@ -1080,7 +1193,7 @@
     border-radius: 10px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(255, 255, 255, 0.04);
-    color: #f4eadc;
+    color: #fae8ff;
     font-size: 12px;
     outline: none;
     box-sizing: border-box;
@@ -1094,7 +1207,7 @@
 
   .input:focus,
   .textarea:focus {
-    border-color: rgba(216, 165, 108, 0.26);
+    border-color: rgba(232, 121, 249, 0.32);
     background: rgba(255, 255, 255, 0.05);
   }
 
@@ -1152,32 +1265,32 @@
   }
 
   .btn-primary {
-    background: linear-gradient(135deg, #dfa66d, #be7f4f);
-    color: #1f1307;
-    box-shadow: 0 10px 22px rgba(190, 127, 79, 0.24);
+    background: linear-gradient(135deg, #f0abfc, #c084fc);
+    color: #2b0f34;
+    box-shadow: 0 10px 22px rgba(192, 132, 252, 0.28);
   }
 
   .btn-primary:hover:not(:disabled) {
-    background: linear-gradient(135deg, #e8b27b, #ca8a59);
-    box-shadow: 0 14px 26px rgba(190, 127, 79, 0.3);
+    background: linear-gradient(135deg, #f5c2ff, #d8b4fe);
+    box-shadow: 0 14px 26px rgba(192, 132, 252, 0.34);
     transform: translateY(-1px);
   }
 
   .btn-primary:active:not(:disabled) {
     transform: translateY(0);
-    box-shadow: 0 6px 14px rgba(190, 127, 79, 0.2);
+    box-shadow: 0 6px 14px rgba(192, 132, 252, 0.22);
   }
 
   .btn-secondary {
     background: rgba(255, 255, 255, 0.045);
-    color: #ddd3c4;
+    color: #ead7ef;
     border-color: rgba(255, 255, 255, 0.08);
   }
 
   .btn-secondary:hover {
     background: rgba(255, 255, 255, 0.085);
     border-color: rgba(255, 255, 255, 0.13);
-    color: #f0e7d7;
+    color: #fae8ff;
     transform: translateY(-1px);
   }
 
@@ -1192,7 +1305,7 @@
   .suggestion:focus-visible,
   .input:focus-visible,
   .textarea:focus-visible {
-    outline: 2px solid rgba(216, 165, 108, 0.72);
+    outline: 2px solid rgba(232, 121, 249, 0.72);
     outline-offset: 2px;
   }
 </style>
