@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/tray-icon.png" width="128" alt="Clyde">
+  <img src="assets/tray-icon.png" width="128" alt="myDoro">
 </p>
 <h1 align="center">myDoro</h1>
 <p align="center">
@@ -24,8 +24,8 @@ Works with **Claude Code**, **Codex CLI**, and **Copilot CLI** — all three can
 ## Quick Start
 
 ```bash
-git clone https://github.com/QingJ01/Clyde.git
-cd Clyde
+git clone https://github.com/lezibo/myDoro.git
+cd myDoro/myDoro
 npm install
 npm start        # Tauri dev mode with hot-reload
 ```
