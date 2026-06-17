@@ -181,41 +181,9 @@ The correct format in `~/.claude/settings.json` should look like:
 
 > Permission bubbles only appear for tools that trigger Claude Code's `PermissionRequest` event.
 
-## Contributing
+## Origin
 
-Issues, ideas, and PRs welcome — [open an issue](https://github.com/QingJ01/Clyde/issues) or submit a PR.
-
-```bash
-npm test             # cargo test (19 unit tests)
-```
-
-### Contributors
-
-<table>
-  <tr>
-    <td align="center"><a href="https://github.com/QingJ01"><img src="https://github.com/QingJ01.png" width="50" style="border-radius:50%" /><br /><sub><b>QingJ01</b></sub></a><br /><sub>Core Contributor</sub></td>
-    <td align="center"><a href="https://github.com/rullerzhou-afk"><img src="https://github.com/rullerzhou-afk.png" width="50" style="border-radius:50%" /><br /><sub><b>rullerzhou-afk</b></sub></a><br /><sub>Original Project Author</sub></td>
-    <td align="center"><a href="https://github.com/PixelCookie-zyf"><img src="https://github.com/PixelCookie-zyf.png" width="50" style="border-radius:50%" /><br /><sub><b>PixelCookie-zyf</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/yujiachen-y"><img src="https://github.com/yujiachen-y.png" width="50" style="border-radius:50%" /><br /><sub><b>yujiachen-y</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/AooooooZzzz"><img src="https://github.com/AooooooZzzz.png" width="50" style="border-radius:50%" /><br /><sub><b>AooooooZzzz</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/purefkh"><img src="https://github.com/purefkh.png" width="50" style="border-radius:50%" /><br /><sub><b>purefkh</b></sub></a><br /><sub>Original Contributor</sub></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://github.com/Tobeabellwether"><img src="https://github.com/Tobeabellwether.png" width="50" style="border-radius:50%" /><br /><sub><b>Tobeabellwether</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/Jasonhonghh"><img src="https://github.com/Jasonhonghh.png" width="50" style="border-radius:50%" /><br /><sub><b>Jasonhonghh</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/crashchen"><img src="https://github.com/crashchen.png" width="50" style="border-radius:50%" /><br /><sub><b>crashchen</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/hongbigtou"><img src="https://github.com/hongbigtou.png" width="50" style="border-radius:50%" /><br /><sub><b>hongbigtou</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/InTimmyDate"><img src="https://github.com/InTimmyDate.png" width="50" style="border-radius:50%" /><br /><sub><b>InTimmyDate</b></sub></a><br /><sub>Original Contributor</sub></td>
-    <td align="center"><a href="https://github.com/NeizhiTouhu"><img src="https://github.com/NeizhiTouhu.png" width="50" style="border-radius:50%" /><br /><sub><b>NeizhiTouhu</b></sub></a><br /><sub>Original Contributor</sub></td>
-  </tr>
-</table>
-
-## Acknowledgments
-
-- Forked from [Clawd on Desk](https://github.com/rullerzhou-afk/clawd-on-desk) by [@rullerzhou-afk](https://github.com/rullerzhou-afk) — the original Clawd desktop pet project that inspired Clyde
-- Clyde pixel art reference from [clawd-tank](https://github.com/marciogranzotto/clawd-tank) by [@marciogranzotto](https://github.com/marciogranzotto)
-- Thanks to the [LINUX DO](https://linux.do/) community for feedback and support
-- The Clyde character ("ClawdWizard") is a community creation. This project is not officially affiliated with or endorsed by [Anthropic](https://www.anthropic.com).
+myDoro evolved from [QingJ01/Clyde](https://github.com/QingJ01/Clyde). Thanks to the original project for the inspiration, structure, and code foundation that made it possible to turn this into a birthday gift to myself.
 
 ## License
 
