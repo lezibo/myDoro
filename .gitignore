@@ -14,6 +14,15 @@ Thumbs.db
 .claude/
 CLAUDE.md
 
+# Docs generated locally
+docs/
+!docs/copilot-setup.md
+!docs/release-v0.5.5.md
+
+# GIF recording tools (not part of main project)
+scripts/
+!scripts/remote-deploy.sh
+
 # Archives
 *.zip
 
