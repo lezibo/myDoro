@@ -1,3 +1,9 @@
+最新消息：
+  codex已经集成了宠物功能，比我这个好用。我这个没有实时的简略对话与多会话管理，后续会加上；我这个有随机图、眼部追踪鼠标；。可以理解为我的这个实用性差点，外观好点。
+使用方式：
+  1、先安装 codex宠物相关的skill，直接在codex app 中输入：“$skill-installer hatch-pet”
+  2、对话中输入‘/’唤起刚才安装的宠物相关的skill‘hatch-pet’，之后输入“帮我创建一个新宠物 新的形象可以参考${放doro的图片路径}，这次动作仅涉及形象的变更”
+  3、等codex 执行完之后 在 设置 -> 设置 -> pets 中最后一行找到自定义宠物就可以了
 <p align="center">
   <img src="assets/tray-icon.png" width="128" alt="myDoro">
 </p>
