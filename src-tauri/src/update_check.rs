@@ -208,6 +208,13 @@ fn show_status_bubble(app: &AppHandle, title_key: &str, description: &str) {
         update_url: None,
         update_notes: None,
         update_lang: None,
+        status_label: None,
+        status_description: None,
+        status_state: None,
+        status_badge: None,
+        thread_url: None,
+        session_chain: Vec::new(),
+        session_items: Vec::new(),
     };
 
     let id = data.id.clone();
@@ -260,6 +267,13 @@ fn show_update_bubble(app: &AppHandle, release: &ReleaseInfo) {
         update_url: Some(release.url.clone()),
         update_notes: Some(notes),
         update_lang: Some(lang),
+        status_label: None,
+        status_description: None,
+        status_state: None,
+        status_badge: None,
+        thread_url: None,
+        session_chain: Vec::new(),
+        session_items: Vec::new(),
     };
 
     crate::permission::show_bubble(app, &bubbles, data);

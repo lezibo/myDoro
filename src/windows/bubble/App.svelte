@@ -22,6 +22,7 @@
   let pointerCaptureEl: HTMLElement | null = null;
   let closing = $state(false);
   let unlistenPrepareClose: (() => void) | null = null;
+  let unlistenDataUpdated: (() => void) | null = null;
 
   function measureHeight() {
     if (!rootEl) return;
@@ -111,6 +112,13 @@
       }, 200);
     });
 
+    unlistenDataUpdated = await listen<{ id: string; data: any }>('bubble-data-updated', async ({ payload }) => {
+      if (payload?.id !== entryId || closing) return;
+      bubbleData = payload.data;
+      await tick();
+      measureHeight();
+    });
+
     bubbleData = await invoke('get_bubble_data', { id: entryId });
     await tick();
 
@@ -129,6 +137,7 @@
   onDestroy(() => {
     resizeObserver?.disconnect();
     unlistenPrepareClose?.();
+    unlistenDataUpdated?.();
     window.removeEventListener('pointerdown', onPointerDown);
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
@@ -161,6 +170,13 @@
       updateVersion={bubbleData.update_version ?? ''}
       updateUrl={bubbleData.update_url ?? ''}
       updateNotes={bubbleData.update_notes ?? ''}
+      statusLabel={bubbleData.status_label ?? ''}
+      statusDescription={bubbleData.status_description ?? ''}
+      statusState={bubbleData.status_state ?? ''}
+      statusBadge={bubbleData.status_badge ?? ''}
+      threadUrl={bubbleData.thread_url ?? ''}
+      sessionChain={bubbleData.session_chain ?? []}
+      sessionItems={bubbleData.session_items ?? []}
     />
   {:else}
     <div class="loading">Loading...</div>

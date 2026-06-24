@@ -14,6 +14,12 @@ Thumbs.db
 .claude/
 CLAUDE.md
 
+# Local agent config
+.ai/mcp/mcp.json
+
+# Generated pet assets
+hatch-pet-runs/
+
 # Docs generated locally
 docs/
 !docs/copilot-setup.md

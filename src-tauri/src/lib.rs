@@ -19,11 +19,13 @@ mod update_check;
 mod util;
 mod windows;
 
+use base64::{engine::general_purpose, Engine as _};
 use http_server::{ApprovalQueue, PendingPerms};
 use prefs::SharedPrefs;
 use serde::Serialize;
 use state_machine::{SharedState, StateMachine};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::window::Color;
 use tauri::{AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition};
@@ -42,10 +44,15 @@ pub type SleepAbortHandle = Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()
 /// Whether the pet is hidden to system tray.
 pub type HiddenFlag = Arc<Mutex<bool>>;
 
+const SESSION_STATUS_BUBBLE_ID: &str = "session-status";
+const SESSION_MANAGER_BUBBLE_ID: &str = "session-manager";
+const SESSION_CHAIN_MAX_BLOCKS: usize = 8;
+
 #[derive(Clone, Serialize)]
 struct PetConfig {
     opacity: f32,
     time_image_interval_secs: u16,
+    custom_pet_image_data_url: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -67,8 +74,18 @@ struct MenuSession {
 }
 
 #[derive(Serialize)]
+struct MenuCustomPet {
+    index: usize,
+    name: String,
+    selected: bool,
+}
+
+#[derive(Serialize)]
 struct MenuData {
     sessions: Vec<MenuSession>,
+    custom_pets: Vec<MenuCustomPet>,
+    using_custom_pet: bool,
+    is_hidden: bool,
     is_dnd: bool,
     is_mini: bool,
     lang: String,
@@ -82,6 +99,13 @@ struct MenuData {
     auto_dnd_meetings: bool,
     auto_start_with_claude: bool,
     environment_controls_supported: bool,
+}
+
+struct SessionStatusText {
+    state: &'static str,
+    label: &'static str,
+    description: &'static str,
+    badge: &'static str,
 }
 
 struct DragState {
@@ -129,13 +153,105 @@ fn emit_snap_preview(app: &AppHandle, side: Option<mini::SnapSide>) {
 }
 
 fn emit_pet_config(app: &AppHandle, prefs: &prefs::Prefs) {
-    let _ = app.emit(
-        "pet-config-changed",
-        PetConfig {
-            opacity: prefs.opacity,
-            time_image_interval_secs: prefs.time_image_interval_secs,
-        },
-    );
+    let _ = app.emit("pet-config-changed", pet_config_from_prefs(prefs));
+}
+
+fn pet_config_from_prefs(prefs: &prefs::Prefs) -> PetConfig {
+    PetConfig {
+        opacity: prefs.opacity,
+        time_image_interval_secs: prefs.time_image_interval_secs,
+        custom_pet_image_data_url: custom_pet_data_url(&prefs.custom_pet_image_path),
+    }
+}
+
+fn codex_pets_dir() -> Option<PathBuf> {
+    dirs::home_dir().map(|home| home.join(".codex").join("pets"))
+}
+
+fn is_supported_pet_image(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif")
+    )
+}
+
+fn pet_image_mime(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg" | "jpeg") => Some("image/jpeg"),
+        Some("webp") => Some("image/webp"),
+        Some("gif") => Some("image/gif"),
+        _ => None,
+    }
+}
+
+fn custom_pet_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("Custom Pet")
+        .to_string()
+}
+
+fn collect_custom_pet_images(dir: &Path, depth: usize, images: &mut Vec<PathBuf>) {
+    if depth > 3 || images.len() >= 100 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_custom_pet_images(&path, depth + 1, images);
+        } else if is_supported_pet_image(&path) {
+            images.push(path);
+        }
+    }
+}
+
+fn codex_custom_pet_images() -> Vec<PathBuf> {
+    let Some(dir) = codex_pets_dir() else {
+        return Vec::new();
+    };
+    let mut images = Vec::new();
+    collect_custom_pet_images(&dir, 0, &mut images);
+    images.sort();
+    images
+}
+
+fn is_safe_codex_pet_path(path: &Path) -> bool {
+    let Some(pets_dir) = codex_pets_dir().and_then(|dir| dir.canonicalize().ok()) else {
+        return false;
+    };
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    path.starts_with(pets_dir) && is_supported_pet_image(&path)
+}
+
+fn custom_pet_data_url(path: &str) -> Option<String> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(path);
+    if !is_safe_codex_pet_path(&path) {
+        return None;
+    }
+    let mime = pet_image_mime(&path)?;
+    let bytes = std::fs::read(path).ok()?;
+    Some(format!(
+        "data:{mime};base64,{}",
+        general_purpose::STANDARD.encode(bytes)
+    ))
 }
 
 fn emit_interaction_state(app: &AppHandle, prefs: &prefs::Prefs) {
@@ -283,6 +399,19 @@ pub(crate) fn set_time_image_interval_secs(app: &AppHandle, secs: u16) {
     };
     let mut prefs = prefs_state.lock_or_recover();
     prefs.time_image_interval_secs = prefs::normalize_time_image_interval_secs(secs);
+    prefs::save(app, &prefs);
+    emit_pet_config(app, &prefs);
+}
+
+pub(crate) fn set_custom_pet_image_path(app: &AppHandle, path: Option<PathBuf>) {
+    let Some(prefs_state) = app.try_state::<SharedPrefs>() else {
+        return;
+    };
+    let mut prefs = prefs_state.lock_or_recover();
+    prefs.custom_pet_image_path = path
+        .filter(|path| is_safe_codex_pet_path(path))
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_default();
     prefs::save(app, &prefs);
     emit_pet_config(app, &prefs);
 }
@@ -974,13 +1103,17 @@ fn show_context_menu(
         }
     }
 
-    // Hide / About / Quit
+    // Pet overlay / About / Quit
     if let Ok(sep) = PredefinedMenuItem::separator(&app) {
         items.push(Box::new(sep));
     }
-    if let Ok(hide) =
-        MenuItem::with_id(&app, "ctx-hide", i18n::t("hide", &lang), true, None::<&str>)
-    {
+    if let Ok(hide) = MenuItem::with_id(
+        &app,
+        "ctx-tuck-away-pet",
+        i18n::t("tuckAwayPet", &lang),
+        true,
+        None::<&str>,
+    ) {
         items.push(Box::new(hide));
     }
     if let Ok(about) = MenuItem::with_id(
@@ -1020,10 +1153,7 @@ fn mini_peek_out(app: AppHandle) {
 #[tauri::command]
 fn get_pet_config(prefs: tauri::State<'_, SharedPrefs>) -> PetConfig {
     let prefs = prefs.lock_or_recover();
-    PetConfig {
-        opacity: prefs.opacity,
-        time_image_interval_secs: prefs.time_image_interval_secs,
-    }
+    pet_config_from_prefs(&prefs)
 }
 
 #[tauri::command]
@@ -1037,6 +1167,7 @@ fn get_interaction_state(prefs: tauri::State<'_, SharedPrefs>) -> InteractionSta
 
 #[tauri::command]
 fn get_menu_data(
+    app: AppHandle,
     state: tauri::State<'_, SharedState>,
     prefs: tauri::State<'_, SharedPrefs>,
 ) -> MenuData {
@@ -1070,8 +1201,24 @@ fn get_menu_data(
             }
         })
         .collect();
+    let selected_custom_pet = prefs.custom_pet_image_path.clone();
+    let custom_pets = codex_custom_pet_images()
+        .into_iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let path_str = path.to_string_lossy().to_string();
+            MenuCustomPet {
+                index,
+                name: custom_pet_name(&path),
+                selected: path_str == selected_custom_pet,
+            }
+        })
+        .collect();
     MenuData {
         sessions,
+        custom_pets,
+        using_custom_pet: is_safe_codex_pet_path(Path::new(&selected_custom_pet)),
+        is_hidden: is_hidden(&app),
         is_dnd,
         is_mini: prefs.mini_mode,
         lang: prefs.lang.clone(),
@@ -1101,6 +1248,12 @@ pub(crate) fn do_toggle_dnd(app: &AppHandle, state: &SharedState) {
         sm.dnd
     };
     let _ = app.emit("dnd-change", serde_json::json!({ "enabled": new_dnd }));
+    if new_dnd {
+        close_session_status_bubble(app);
+        if let Some(bubbles) = app.try_state::<permission::BubbleMap>() {
+            permission::prepare_close_bubble(app, &bubbles, SESSION_MANAGER_BUBBLE_ID);
+        }
+    }
 }
 
 pub(crate) fn set_auto_dnd(app: &AppHandle, state: &SharedState, enabled: bool) {
@@ -1117,6 +1270,12 @@ pub(crate) fn set_auto_dnd(app: &AppHandle, state: &SharedState, enabled: bool) 
     }
     let new_dnd = state.lock_or_recover().dnd;
     let _ = app.emit("dnd-change", serde_json::json!({ "enabled": new_dnd }));
+    if new_dnd {
+        close_session_status_bubble(app);
+        if let Some(bubbles) = app.try_state::<permission::BubbleMap>() {
+            permission::prepare_close_bubble(app, &bubbles, SESSION_MANAGER_BUBBLE_ID);
+        }
+    }
     if let Some(lang) = app
         .try_state::<SharedPrefs>()
         .map(|prefs| prefs.lock_or_recover().lang.clone())
@@ -1242,6 +1401,264 @@ pub(crate) fn emit_state(app: &AppHandle, state_str: &str, svg: &str) {
         "state-change",
         serde_json::json!({ "state": out_state, "svg": out_svg, "flip": flip }),
     );
+}
+
+fn session_status_text(state: &str, lang: &str) -> Option<SessionStatusText> {
+    let zh = lang == "zh";
+    match state {
+        "working" | "thinking" | "juggling" | "sweeping" | "carrying" => Some(SessionStatusText {
+            state: "running",
+            label: if zh { "正在运行" } else { "Running" },
+            description: if zh {
+                "Codex 正在处理这个线程。"
+            } else {
+                "Codex is running on this thread."
+            },
+            badge: if zh { "运行中" } else { "RUNNING" },
+        }),
+        "idle" => Some(SessionStatusText {
+            state: "waiting",
+            label: if zh {
+                "等待输入"
+            } else {
+                "Waiting for input"
+            },
+            description: if zh {
+                "Codex 正在等待你的下一条消息。"
+            } else {
+                "Codex is waiting for your next message."
+            },
+            badge: if zh { "待回复" } else { "WAITING" },
+        }),
+        "attention" => Some(SessionStatusText {
+            state: "review",
+            label: if zh { "可审查" } else { "Ready for review" },
+            description: if zh {
+                "Codex 已完成这一轮。准备好时可以回到线程审查结果。"
+            } else {
+                "Codex finished this turn. Review the thread when ready."
+            },
+            badge: if zh { "审查" } else { "REVIEW" },
+        }),
+        "notification" => Some(SessionStatusText {
+            state: "waiting",
+            label: if zh {
+                "需要输入"
+            } else {
+                "Waiting for input"
+            },
+            description: if zh {
+                "Codex 需要你的输入才能继续。"
+            } else {
+                "Codex needs your input before it can continue."
+            },
+            badge: if zh { "待回复" } else { "WAITING" },
+        }),
+        "error" => Some(SessionStatusText {
+            state: "error",
+            label: if zh { "需要查看" } else { "Needs review" },
+            description: if zh {
+                "Codex 在这个线程中遇到了问题。"
+            } else {
+                "Codex hit an issue in this thread."
+            },
+            badge: if zh { "错误" } else { "ERROR" },
+        }),
+        "blocked" => Some(SessionStatusText {
+            state: "error",
+            label: if zh { "已拦截" } else { "Blocked" },
+            description: if zh {
+                "Codex 已暂停这个线程。"
+            } else {
+                "Codex paused this thread."
+            },
+            badge: if zh { "已拦截" } else { "BLOCKED" },
+        }),
+        _ => None,
+    }
+}
+
+fn session_state_label(state: &str, lang: &str) -> String {
+    match state {
+        "working" | "typing" => i18n::t("sessionWorking", lang),
+        "thinking" => i18n::t("sessionThinking", lang),
+        "juggling" => i18n::t("sessionJuggling", lang),
+        "idle" => i18n::t("sessionIdle", lang),
+        "sleeping" => i18n::t("sessionSleeping", lang),
+        _ => state.to_string(),
+    }
+}
+
+fn build_session_bubble_items(
+    state: &SharedState,
+    lang: &str,
+) -> Vec<permission::SessionBubbleItem> {
+    let sessions = state.lock_or_recover().session_summaries();
+
+    sessions
+        .into_iter()
+        .map(|session| {
+            let state_label = session_state_label(&session.state, lang);
+            let display = session_meta::ensure_session_display_meta(
+                state,
+                &session.id,
+                Some(session.agent_id.as_str()),
+                if session.cwd.is_empty() {
+                    None
+                } else {
+                    Some(session.cwd.as_str())
+                },
+            );
+            let summary = if !session.summary.trim().is_empty() {
+                session.summary
+            } else if !display.summary.is_empty() {
+                display.summary.clone()
+            } else {
+                format!("{} {}", display.agent_label, state_label)
+            };
+
+            permission::SessionBubbleItem {
+                id: session.id.clone(),
+                agent_label: display.agent_label,
+                summary,
+                project: display.project,
+                short_id: display.short_id,
+                state: session.state,
+                state_label,
+                updated_label: format_relative_time(session.updated_secs_ago, lang),
+                thread_url: session_meta::codex_thread_url_for_session_id(&session.id),
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn sync_session_manager_bubble(app: &AppHandle, state: &SharedState) {
+    let Some(bubbles) = app.try_state::<permission::BubbleMap>() else {
+        return;
+    };
+    let dnd = state.lock_or_recover().dnd;
+    if is_hidden(app) || dnd {
+        permission::prepare_close_bubble(app, &bubbles, SESSION_MANAGER_BUBBLE_ID);
+        return;
+    }
+
+    let lang = app
+        .try_state::<SharedPrefs>()
+        .map(|prefs| prefs.lock_or_recover().lang.clone())
+        .unwrap_or_else(|| "en".into());
+    let session_items = build_session_bubble_items(state, &lang);
+    if session_items.len() < 2 {
+        permission::prepare_close_bubble(app, &bubbles, SESSION_MANAGER_BUBBLE_ID);
+        return;
+    }
+
+    let data = permission::BubbleData {
+        id: SESSION_MANAGER_BUBBLE_ID.into(),
+        window_kind: permission::WindowKind::SessionManager,
+        tool_name: String::new(),
+        tool_input: serde_json::Value::Null,
+        suggestions: Vec::new(),
+        session_id: String::new(),
+        lang,
+        agent_label: String::new(),
+        session_summary: String::new(),
+        session_project: String::new(),
+        session_short_id: String::new(),
+        is_elicitation: false,
+        elicitation_message: None,
+        elicitation_schema: None,
+        elicitation_mode: None,
+        elicitation_url: None,
+        elicitation_server_name: None,
+        mode_label: None,
+        mode_description: None,
+        update_version: None,
+        update_url: None,
+        update_notes: None,
+        update_lang: None,
+        status_label: None,
+        status_description: None,
+        status_state: None,
+        status_badge: None,
+        thread_url: None,
+        session_chain: Vec::new(),
+        session_items,
+    };
+    permission::upsert_bubble(app, &bubbles, data);
+}
+
+pub(crate) fn sync_session_status_bubble(
+    app: &AppHandle,
+    state: &SharedState,
+    session_id: &str,
+    display_state: &str,
+) {
+    sync_session_manager_bubble(app, state);
+
+    if is_hidden(app) {
+        return;
+    }
+    let agent_id = {
+        let sm = state.lock_or_recover();
+        if sm.dnd {
+            return;
+        }
+        match sm.sessions.get(session_id) {
+            Some(entry) => entry.agent_id.clone(),
+            None => return,
+        }
+    };
+    if !agent_id.to_ascii_lowercase().contains("codex") {
+        return;
+    }
+    let Some(bubbles) = app.try_state::<permission::BubbleMap>() else {
+        return;
+    };
+    let lang = app
+        .try_state::<SharedPrefs>()
+        .map(|prefs| prefs.lock_or_recover().lang.clone())
+        .unwrap_or_else(|| "en".into());
+    let Some(status) = session_status_text(display_state, &lang) else {
+        return;
+    };
+    let display =
+        session_meta::ensure_session_display_meta(state, session_id, Some(&agent_id), None);
+    let session_chain =
+        session_meta::resolve_latest_session_chain(session_id, &agent_id, SESSION_CHAIN_MAX_BLOCKS);
+
+    let data = permission::BubbleData {
+        id: SESSION_STATUS_BUBBLE_ID.into(),
+        window_kind: permission::WindowKind::SessionStatus,
+        tool_name: String::new(),
+        tool_input: serde_json::Value::Null,
+        suggestions: Vec::new(),
+        session_id: session_id.to_string(),
+        lang: lang.clone(),
+        agent_label: display.agent_label,
+        session_summary: display.summary,
+        session_project: display.project,
+        session_short_id: display.short_id,
+        is_elicitation: false,
+        elicitation_message: None,
+        elicitation_schema: None,
+        elicitation_mode: None,
+        elicitation_url: None,
+        elicitation_server_name: None,
+        mode_label: None,
+        mode_description: None,
+        update_version: None,
+        update_url: None,
+        update_notes: None,
+        update_lang: None,
+        status_label: Some(status.label.into()),
+        status_description: Some(status.description.into()),
+        status_state: Some(status.state.into()),
+        status_badge: Some(status.badge.into()),
+        thread_url: session_meta::codex_thread_url_for_session_id(session_id),
+        session_chain,
+        session_items: Vec::new(),
+    };
+    permission::upsert_bubble(app, &bubbles, data);
 }
 
 fn state_for_current_display(app: &AppHandle, state_str: &str, svg: &str) -> (String, String) {
@@ -1522,6 +1939,13 @@ pub(crate) fn update_session_and_emit(
     };
     emit_state(app, &resolved, &svg);
     sync_hit(app);
+    sync_session_status_bubble(app, state, session_id, &resolved);
+}
+
+fn close_session_status_bubble(app: &AppHandle) {
+    if let Some(bubbles) = app.try_state::<permission::BubbleMap>() {
+        permission::prepare_close_bubble(app, &bubbles, SESSION_STATUS_BUBBLE_ID);
+    }
 }
 
 /// Atomically update state machine and emit to frontend.
@@ -1649,6 +2073,43 @@ fn open_update_url(app: AppHandle, url: String) {
 }
 
 #[tauri::command]
+fn open_session_thread(
+    app: AppHandle,
+    bubbles: tauri::State<permission::BubbleMap>,
+    id: String,
+    url: String,
+) {
+    let _ = tauri::async_runtime::spawn(async move {
+        let _ = open::that(&url);
+    });
+    permission::prepare_close_bubble(&app, &bubbles, &id);
+}
+
+#[tauri::command]
+fn open_session_target(
+    state: tauri::State<'_, SharedState>,
+    session_id: String,
+    url: Option<String>,
+) {
+    if let Some(url) = url.filter(|url| !url.trim().is_empty()) {
+        let _ = tauri::async_runtime::spawn(async move {
+            let _ = open::that(&url);
+        });
+        return;
+    }
+
+    let target = {
+        let sm = state.lock_or_recover();
+        sm.sessions
+            .get(&session_id)
+            .and_then(|entry| entry.source_pid.map(|pid| (pid, entry.cwd.clone())))
+    };
+    if let Some((pid, cwd)) = target {
+        focus::focus_window_by_pid(pid, &cwd);
+    }
+}
+
+#[tauri::command]
 fn dismiss_update_version(app: AppHandle, version: String) {
     if let Some(prefs_state) = app.try_state::<SharedPrefs>() {
         let mut p = prefs_state.lock_or_recover();
@@ -1687,8 +2148,16 @@ fn handle_context_menu_event(app: &AppHandle, state: &SharedState, id: &str) {
     let Some(action) = id.strip_prefix("ctx-") else {
         return;
     };
+    if let Some(index) = action.strip_prefix("pet-custom-") {
+        if let Ok(index) = index.parse::<usize>() {
+            let path = codex_custom_pet_images().into_iter().nth(index);
+            set_custom_pet_image_path(app, path);
+        }
+        return;
+    }
     let mut refresh_tray = false;
     match action {
+        "pet-built-in" => set_custom_pet_image_path(app, None),
         "dnd" => {
             do_toggle_dnd(app, state);
             refresh_tray = true;
@@ -1803,6 +2272,8 @@ fn handle_context_menu_event(app: &AppHandle, state: &SharedState, id: &str) {
         }
         "lang-en" => tray::apply_lang_pub(app, "en"),
         "lang-zh" => tray::apply_lang_pub(app, "zh"),
+        "wake-pet" => do_show_from_tray(app),
+        "tuck-away-pet" => do_hide_to_tray(app),
         "hide" => do_hide_to_tray(app),
         "about" => {
             let _ = open::that("https://github.com/QingJ01/Clyde");
@@ -1970,6 +2441,7 @@ fn start_cleanup_loop(app: &AppHandle, state: SharedState) {
                 // Lock dropped before emit_state to avoid holding state across prefs/mini locks
                 emit_state(&app_for_cleanup, &resolved, &svg);
                 sync_hit(&app_for_cleanup);
+                sync_session_manager_bubble(&app_for_cleanup, &state_for_cleanup);
             }
         }
     });
@@ -2029,6 +2501,8 @@ pub fn run() {
             finalize_bubble_close,
             focus::focus_terminal_for_session,
             open_update_url,
+            open_session_thread,
+            open_session_target,
             dismiss_update_version,
         ])
         .setup(move |app| {
@@ -2173,6 +2647,41 @@ mod tests {
         assert_eq!(
             logical_drag_position(120.0, 80.0, start, current),
             (180, 152)
+        );
+    }
+
+    #[test]
+    fn test_session_status_text_matches_codex_pet_states() {
+        assert_eq!(
+            session_status_text("working", "en").unwrap().label,
+            "Running"
+        );
+        assert_eq!(
+            session_status_text("idle", "en").unwrap().label,
+            "Waiting for input"
+        );
+        assert_eq!(
+            session_status_text("attention", "en").unwrap().label,
+            "Ready for review"
+        );
+        assert_eq!(
+            session_status_text("blocked", "zh").unwrap().label,
+            "已拦截"
+        );
+    }
+
+    #[test]
+    fn test_custom_pet_image_detection() {
+        assert!(is_supported_pet_image(Path::new("doro.PNG")));
+        assert!(is_supported_pet_image(Path::new("doro.webp")));
+        assert!(!is_supported_pet_image(Path::new("doro.txt")));
+    }
+
+    #[test]
+    fn test_custom_pet_name_uses_file_stem() {
+        assert_eq!(
+            custom_pet_name(Path::new("/tmp/codex-pet.webp")),
+            "codex-pet"
         );
     }
 

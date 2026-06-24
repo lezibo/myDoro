@@ -58,6 +58,11 @@
     leftPupil?: string;
     rightPupil?: string;
   };
+  type PetConfig = {
+    opacity: number;
+    time_image_interval_secs: number;
+    custom_pet_image_data_url?: string | null;
+  };
 
   const doroAssets: Record<string, DoroAsset> = {
     'clyde-idle-follow.svg': {
@@ -109,6 +114,13 @@
     return doroAssets[filename] ?? doroAssets['clyde-idle-follow.svg'];
   }
 
+  function getCurrentDoroAsset(filename: string): DoroAsset {
+    if (customPetImageDataUrl) {
+      return { src: customPetImageDataUrl, mood: 'custom' };
+    }
+    return getDoroAsset(filename);
+  }
+
   function resetPupils() {
     eyeOffsetX = 0;
     eyeOffsetY = 0;
@@ -117,12 +129,13 @@
   function setPetVisual(filename: string, updateStore = true) {
     if (updateStore) currentSvg.set(filename);
     svgContent = getSvg(filename);
-    doroAsset = getDoroAsset(filename);
+    doroAsset = getCurrentDoroAsset(filename);
     resetPupils();
   }
 
   let svgContent = $state(getSvg(get(currentSvg)));
-  let doroAsset = $state(getDoroAsset(get(currentSvg)));
+  let customPetImageDataUrl = $state('');
+  let doroAsset = $state(getCurrentDoroAsset(get(currentSvg)));
   let flipped = $state(false);
   let unlisten: UnlistenFn[] = [];
   let isReacting = false;
@@ -229,8 +242,10 @@
 
   onMount(() => {
     const setup = async () => {
-      const config = await invoke<{ opacity: number; time_image_interval_secs: number }>('get_pet_config');
+      const config = await invoke<PetConfig>('get_pet_config');
       opacity = config.opacity ?? 1;
+      customPetImageDataUrl = config.custom_pet_image_data_url ?? '';
+      setPetVisual(get(currentSvg), false);
       applyTimeImageInterval(config.time_image_interval_secs ?? 60);
 
       unlisten.push(await listen<{ state: string; svg: string; flip?: boolean }>('state-change', ({ payload }) => {
@@ -260,8 +275,12 @@
         playDoroImageReaction(doroSpin, 'spin', SPIN_REACTION_VISIBLE_MS);
       }));
 
-      unlisten.push(await listen<{ opacity: number; time_image_interval_secs: number }>('pet-config-changed', ({ payload }) => {
+      unlisten.push(await listen<PetConfig>('pet-config-changed', ({ payload }) => {
         opacity = payload.opacity ?? 1;
+        customPetImageDataUrl = payload.custom_pet_image_data_url ?? '';
+        if (!isTimeImageShowing && !isReacting) {
+          setPetVisual(get(currentSvg), false);
+        }
         applyTimeImageInterval(payload.time_image_interval_secs ?? 60);
       }));
 

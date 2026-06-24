@@ -203,6 +203,13 @@ fn trigger_mode_notice(app: &AppHandle, _session_id: &str, mode: &PermissionMode
         update_url: None,
         update_notes: None,
         update_lang: None,
+        status_label: None,
+        status_description: None,
+        status_state: None,
+        status_badge: None,
+        thread_url: None,
+        session_chain: Vec::new(),
+        session_items: Vec::new(),
     };
 
     if let Some(bubbles) = app.try_state::<crate::permission::BubbleMap>() {

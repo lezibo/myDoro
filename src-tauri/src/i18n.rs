@@ -17,6 +17,8 @@ pub fn t(key: &str, lang: &str) -> String {
         ("autoStart", "zh") => "随 Claude Code 启动".into(),
         ("hide", "zh") => "隐藏到托盘".into(),
         ("show", "zh") => "显示 Clyde".into(),
+        ("wakePet", "zh") => "唤醒宠物".into(),
+        ("tuckAwayPet", "zh") => "收起宠物".into(),
         ("macOnly", "zh") => "仅 macOS".into(),
         ("opacity", "zh") => "透明度".into(),
         ("permissionWaitTime", "zh") => "权限等待时间".into(),
@@ -49,6 +51,8 @@ pub fn t(key: &str, lang: &str) -> String {
         ("autoStart", _) => "Start with Claude Code".into(),
         ("hide", _) => "Hide to Tray".into(),
         ("show", _) => "Show Clyde".into(),
+        ("wakePet", _) => "Wake Pet".into(),
+        ("tuckAwayPet", _) => "Tuck Away Pet".into(),
         ("macOnly", _) => "macOS only".into(),
         ("opacity", _) => "Opacity".into(),
         ("permissionWaitTime", _) => "Permission Wait Time".into(),
@@ -77,6 +81,11 @@ mod tests {
     #[test]
     fn test_en_fallback() {
         assert_eq!(t("quit", "en"), "Quit");
+    }
+    #[test]
+    fn test_codex_pet_command_labels() {
+        assert_eq!(t("wakePet", "en"), "Wake Pet");
+        assert_eq!(t("tuckAwayPet", "en"), "Tuck Away Pet");
     }
     #[test]
     fn test_unknown_key() {

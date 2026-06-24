@@ -16,18 +16,12 @@ pub type SharedTray = Arc<Mutex<Option<TrayIcon>>>;
 fn build_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
     // Show/Hide toggle — label depends on current hidden state
     let hidden = crate::is_hidden(app);
-    let visibility_label = if hidden {
-        t("show", lang)
+    let (visibility_id, visibility_label) = if hidden {
+        ("wake-pet", t("wakePet", lang))
     } else {
-        t("hide", lang)
+        ("tuck-away-pet", t("tuckAwayPet", lang))
     };
-    let visibility = MenuItem::with_id(
-        app,
-        "toggle-visibility",
-        &visibility_label,
-        true,
-        None::<&str>,
-    )?;
+    let visibility = MenuItem::with_id(app, visibility_id, &visibility_label, true, None::<&str>)?;
 
     let prefs = app
         .try_state::<SharedPrefs>()
@@ -373,6 +367,8 @@ fn handle_tray_event(app: &AppHandle, id: &str) {
     match id {
         "quit" => app.exit(0),
         "toggle-visibility" => crate::do_toggle_visibility(app),
+        "wake-pet" => crate::do_show_from_tray(app),
+        "tuck-away-pet" => crate::do_hide_to_tray(app),
         "dnd" => {
             if let Some(state) = app.try_state::<SharedState>() {
                 crate::do_toggle_dnd(app, &state);

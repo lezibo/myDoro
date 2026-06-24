@@ -60,6 +60,8 @@ pub struct Prefs {
     #[serde(default = "default_time_image_interval_secs")]
     pub time_image_interval_secs: u16,
     #[serde(default)]
+    pub custom_pet_image_path: String,
+    #[serde(default)]
     pub monitor_positions: HashMap<String, MonitorPlacement>,
     #[serde(default = "default_true")]
     pub check_for_updates: bool,
@@ -146,6 +148,7 @@ impl Default for Prefs {
             auto_dnd_meetings: false,
             permission_decision_window_secs: default_permission_decision_window_secs(),
             time_image_interval_secs: default_time_image_interval_secs(),
+            custom_pet_image_path: String::new(),
             monitor_positions: HashMap::new(),
             check_for_updates: true,
             last_update_check_epoch: 0,
@@ -216,6 +219,7 @@ mod tests {
             DEFAULT_PERMISSION_DECISION_WINDOW_SECS
         );
         assert_eq!(p.time_image_interval_secs, DEFAULT_TIME_IMAGE_INTERVAL_SECS);
+        assert!(p.custom_pet_image_path.is_empty());
     }
     #[test]
     fn test_prefs_roundtrip() {

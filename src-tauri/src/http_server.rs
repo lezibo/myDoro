@@ -406,6 +406,7 @@ async fn post_state(
 
     crate::emit_state(&ctx.app, &new_state, &new_svg);
     crate::sync_hit(&ctx.app);
+    crate::sync_session_status_bubble(&ctx.app, &ctx.state, &sid, &new_state);
 
     // Update permission mode if provided
     if let Some(ref mode) = payload.permission_mode {
@@ -584,6 +585,13 @@ async fn post_permission(
         update_url: None,
         update_notes: None,
         update_lang: None,
+        status_label: None,
+        status_description: None,
+        status_state: None,
+        status_badge: None,
+        thread_url: None,
+        session_chain: Vec::new(),
+        session_items: Vec::new(),
     };
     let response = match queue_request_and_wait(&ctx, bubble_data).await {
         HookDecision::Permission(decision) => perm_response(&decision),
@@ -658,6 +666,13 @@ async fn post_elicitation(
         update_url: None,
         update_notes: None,
         update_lang: None,
+        status_label: None,
+        status_description: None,
+        status_state: None,
+        status_badge: None,
+        thread_url: None,
+        session_chain: Vec::new(),
+        session_items: Vec::new(),
     };
 
     let response = match queue_request_and_wait(&ctx, bubble_data).await {

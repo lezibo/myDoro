@@ -1,6 +1,8 @@
 use crate::state_machine::SharedState;
 use crate::util::MutexExt;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -17,6 +19,13 @@ pub struct SessionDisplayMeta {
     pub summary: String,
     pub project: String,
     pub short_id: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SessionChainBlock {
+    pub kind: String,
+    pub title: String,
+    pub body: String,
 }
 
 pub(crate) fn display_agent_label(agent: &str) -> String {
@@ -44,6 +53,38 @@ pub(crate) fn short_session_id(session_id: &str) -> String {
         .find(|part| part.len() >= 6)
         .unwrap_or(stripped);
     candidate.chars().take(6).collect()
+}
+
+pub(crate) fn codex_thread_url_for_session_id(session_id: &str) -> Option<String> {
+    codex_thread_uuid_from_session_id(session_id).map(|uuid| format!("codex://threads/{uuid}"))
+}
+
+fn codex_thread_uuid_from_session_id(session_id: &str) -> Option<String> {
+    let stripped = session_id.strip_prefix("codex-").unwrap_or(session_id);
+    if is_uuid(stripped) {
+        return Some(stripped.to_string());
+    }
+
+    let parts: Vec<&str> = stripped.rsplit('-').take(5).collect();
+    if parts.len() != 5 {
+        return None;
+    }
+
+    let candidate = format!(
+        "{}-{}-{}-{}-{}",
+        parts[4], parts[3], parts[2], parts[1], parts[0]
+    );
+    is_uuid(&candidate).then_some(candidate)
+}
+
+fn is_uuid(value: &str) -> bool {
+    let parts: Vec<&str> = value.split('-').collect();
+    let lens = [8, 4, 4, 4, 12];
+    parts.len() == lens.len()
+        && parts
+            .iter()
+            .zip(lens)
+            .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 pub(crate) fn project_name_from_cwd(cwd: &str) -> String {
@@ -170,6 +211,23 @@ pub(crate) fn resolve_latest_session_summary(session_id: &str, agent: &str) -> O
         resolve_latest_codex_session_summary(session_id)
     } else {
         resolve_latest_claude_session_summary(session_id)
+    }
+}
+
+pub(crate) fn resolve_latest_session_chain(
+    session_id: &str,
+    agent: &str,
+    max_blocks: usize,
+) -> Vec<SessionChainBlock> {
+    if max_blocks == 0 {
+        return Vec::new();
+    }
+
+    let normalized = agent.trim().to_ascii_lowercase();
+    if normalized.contains("codex") {
+        resolve_latest_codex_session_chain(session_id, max_blocks)
+    } else {
+        Vec::new()
     }
 }
 
@@ -303,6 +361,229 @@ fn resolve_latest_codex_session_summary(session_id: &str) -> Option<String> {
     (!latest.is_empty()).then_some(latest)
 }
 
+fn resolve_latest_codex_session_chain(
+    session_id: &str,
+    max_blocks: usize,
+) -> Vec<SessionChainBlock> {
+    let Some(base) = dirs::home_dir().map(|home| home.join(".codex").join("sessions")) else {
+        return Vec::new();
+    };
+    let hint = session_id.strip_prefix("codex-").unwrap_or(session_id);
+    let Some(path) = find_codex_session_file(&base, hint) else {
+        return Vec::new();
+    };
+    let Ok(file) = File::open(path) else {
+        return Vec::new();
+    };
+    let reader = BufReader::new(file);
+    let mut blocks = Vec::new();
+    let mut call_names: HashMap<String, String> = HashMap::new();
+
+    for line in reader.lines().map_while(Result::ok) {
+        let Ok(entry) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        append_codex_chain_block(&mut blocks, &mut call_names, &entry);
+    }
+
+    if blocks.len() > max_blocks {
+        blocks.split_off(blocks.len() - max_blocks)
+    } else {
+        blocks
+    }
+}
+
+fn append_codex_chain_block(
+    blocks: &mut Vec<SessionChainBlock>,
+    call_names: &mut HashMap<String, String>,
+    entry: &Value,
+) {
+    let Some(top_type) = entry.get("type").and_then(|value| value.as_str()) else {
+        return;
+    };
+
+    match top_type {
+        "event_msg" => append_codex_event_msg_block(blocks, entry),
+        "response_item" => append_codex_response_item_block(blocks, call_names, entry),
+        _ => {}
+    }
+}
+
+fn append_codex_event_msg_block(blocks: &mut Vec<SessionChainBlock>, entry: &Value) {
+    let Some(payload) = entry.get("payload") else {
+        return;
+    };
+    let Some(payload_type) = payload.get("type").and_then(|value| value.as_str()) else {
+        return;
+    };
+
+    match payload_type {
+        "user_message" => {
+            let body = payload
+                .get("message")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if looks_like_system_prompt(body) {
+                return;
+            }
+            push_session_chain_block(blocks, "user", "User", body);
+        }
+        "agent_message" => {
+            let body = payload
+                .get("message")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            push_session_chain_block(blocks, "assistant", "Codex", body);
+        }
+        "task_started" => push_session_chain_block(blocks, "event", "Task started", ""),
+        "task_complete" => push_session_chain_block(blocks, "event", "Task complete", ""),
+        "task_cancelled" => push_session_chain_block(blocks, "event", "Task cancelled", ""),
+        _ => {}
+    }
+}
+
+fn append_codex_response_item_block(
+    blocks: &mut Vec<SessionChainBlock>,
+    call_names: &mut HashMap<String, String>,
+    entry: &Value,
+) {
+    let Some(payload) = entry.get("payload") else {
+        return;
+    };
+    let Some(payload_type) = payload.get("type").and_then(|value| value.as_str()) else {
+        return;
+    };
+
+    match payload_type {
+        "reasoning" => {
+            let body = codex_reasoning_summary(payload).unwrap_or_default();
+            push_session_chain_block(blocks, "reasoning", "Thinking", &body);
+        }
+        "function_call" => {
+            let name = payload
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("tool");
+            if let Some(call_id) = payload.get("call_id").and_then(|value| value.as_str()) {
+                call_names.insert(call_id.to_string(), name.to_string());
+            }
+            let body = payload
+                .get("arguments")
+                .and_then(format_codex_tool_arguments)
+                .unwrap_or_default();
+            push_session_chain_block(blocks, "tool_call", name, &body);
+        }
+        "function_call_output" => {
+            let title = payload
+                .get("call_id")
+                .and_then(|value| value.as_str())
+                .and_then(|call_id| call_names.get(call_id).cloned())
+                .unwrap_or_else(|| "Tool result".to_string());
+            let body = payload
+                .get("output")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            push_session_chain_block(blocks, "tool_result", &title, body);
+        }
+        "message" => {
+            let role = payload
+                .get("role")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            let Some(body) = payload.get("content").and_then(extract_message_text) else {
+                return;
+            };
+            match role {
+                "assistant" => push_session_chain_block(blocks, "assistant", "Codex", &body),
+                "user" => {
+                    if !looks_like_system_prompt(&body) {
+                        push_session_chain_block(blocks, "user", "User", &body);
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_session_chain_block(
+    blocks: &mut Vec<SessionChainBlock>,
+    kind: &str,
+    title: &str,
+    body: &str,
+) {
+    let block = SessionChainBlock {
+        kind: kind.to_string(),
+        title: title.to_string(),
+        body: truncate_chain_body(body),
+    };
+    if block.body.is_empty() && block.kind != "reasoning" && block.kind != "event" {
+        return;
+    }
+    if blocks.last() == Some(&block) {
+        return;
+    }
+    blocks.push(block);
+}
+
+fn codex_reasoning_summary(payload: &Value) -> Option<String> {
+    payload
+        .get("summary")
+        .and_then(extract_message_text)
+        .or_else(|| payload.get("content").and_then(extract_message_text))
+}
+
+fn format_codex_tool_arguments(value: &Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+            return format_codex_tool_arguments(&parsed);
+        }
+        return Some(text.to_string());
+    }
+
+    if let Some(command) = [
+        "cmd",
+        "command",
+        "script",
+        "query",
+        "url",
+        "path",
+        "file_path",
+        "ref_id",
+    ]
+    .iter()
+    .find_map(|key| value.get(*key).and_then(|item| item.as_str()))
+    {
+        return Some(command.to_string());
+    }
+
+    serde_json::to_string(value).ok()
+}
+
+fn truncate_chain_body(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let mut lines = trimmed.lines();
+    let visible_lines = lines
+        .by_ref()
+        .take(4)
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let had_more_lines = lines.next().is_some();
+
+    let mut chars = visible_lines.chars();
+    let truncated: String = chars.by_ref().take(360).collect();
+    if chars.next().is_some() || had_more_lines {
+        format!("{}...", truncated.trim_end())
+    } else {
+        truncated
+    }
+}
+
 fn claude_entry_summary(entry: &Value) -> Option<String> {
     if entry.get("type").and_then(|value| value.as_str()) == Some("user") {
         if let Some(content) = entry
@@ -362,6 +643,9 @@ fn codex_entry_summary(entry: &Value) -> Option<String> {
 }
 
 fn cleaned_non_system_summary(raw: &str) -> Option<String> {
+    if looks_like_system_prompt(raw) {
+        return None;
+    }
     let cleaned = clean_resume_summary(raw);
     (!cleaned.is_empty() && !looks_like_system_prompt(&cleaned)).then_some(cleaned)
 }
@@ -543,6 +827,26 @@ mod tests {
     }
 
     #[test]
+    fn builds_codex_thread_url_from_rollout_filename() {
+        assert_eq!(
+            codex_thread_url_for_session_id(
+                "codex-rollout-2026-06-22T10-43-25-019eed36-1821-7e70-b362-e1b5a169effc"
+            )
+            .as_deref(),
+            Some("codex://threads/019eed36-1821-7e70-b362-e1b5a169effc")
+        );
+    }
+
+    #[test]
+    fn builds_codex_thread_url_from_uuid() {
+        assert_eq!(
+            codex_thread_url_for_session_id("codex-019eed36-1821-7e70-b362-e1b5a169effc")
+                .as_deref(),
+            Some("codex://threads/019eed36-1821-7e70-b362-e1b5a169effc")
+        );
+    }
+
+    #[test]
     fn extracts_claude_user_entry_summary() {
         let entry = serde_json::json!({
             "type": "user",
@@ -579,8 +883,104 @@ mod tests {
 
         assert_eq!(codex_entry_summary(&system_entry), None);
         assert_eq!(
+            cleaned_non_system_summary(
+                "# AGENTS.md instructions\n<INSTRUCTIONS>\n适用对象：`Codex`、`Kiro`、以及其他 agent"
+            ),
+            None
+        );
+        assert_eq!(
             codex_entry_summary(&user_entry).as_deref(),
             Some("请检查当前权限弹窗标题")
         );
+    }
+
+    #[test]
+    fn skips_codex_system_prompt_blocks_for_session_chain() {
+        let entry = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": "# AGENTS.md instructions\n<INSTRUCTIONS>\n适用对象：`Codex`、`Kiro`、以及其他 agent"
+            }
+        });
+        let mut blocks = Vec::new();
+        let mut call_names = HashMap::new();
+
+        append_codex_chain_block(&mut blocks, &mut call_names, &entry);
+
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn extracts_codex_tool_blocks_for_session_chain() {
+        let call = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call_1",
+                "arguments": "{\"cmd\":\"cargo test\"}"
+            }
+        });
+        let output = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "Command: cargo test\nOutput:\nok"
+            }
+        });
+        let mut blocks = Vec::new();
+        let mut call_names = HashMap::new();
+
+        append_codex_chain_block(&mut blocks, &mut call_names, &call);
+        append_codex_chain_block(&mut blocks, &mut call_names, &output);
+
+        assert_eq!(
+            blocks,
+            vec![
+                SessionChainBlock {
+                    kind: "tool_call".into(),
+                    title: "exec_command".into(),
+                    body: "cargo test".into(),
+                },
+                SessionChainBlock {
+                    kind: "tool_result".into(),
+                    title: "exec_command".into(),
+                    body: "Command: cargo test\nOutput:\nok".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn extracts_codex_reasoning_and_assistant_text_blocks_for_session_chain() {
+        let reasoning = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "检查现有弹窗结构"}],
+                "encrypted_content": "ignored"
+            }
+        });
+        let message = serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "我会把链路展示在状态弹窗里。"}]
+            }
+        });
+        let mut blocks = Vec::new();
+        let mut call_names = HashMap::new();
+
+        append_codex_chain_block(&mut blocks, &mut call_names, &reasoning);
+        append_codex_chain_block(&mut blocks, &mut call_names, &message);
+
+        assert_eq!(blocks[0].kind, "reasoning");
+        assert_eq!(blocks[0].body, "检查现有弹窗结构");
+        assert_eq!(blocks[1].kind, "assistant");
+        assert_eq!(blocks[1].body, "我会把链路展示在状态弹窗里。");
     }
 }

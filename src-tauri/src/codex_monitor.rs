@@ -165,10 +165,12 @@ fn codex_update_and_emit(
     };
     crate::emit_state(app, &resolved, &svg);
     crate::sync_hit(app);
+    crate::sync_session_status_bubble(app, state, session_id, state_str);
 }
 
 fn codex_complete_and_emit(app: &AppHandle, state: &SharedState, session_id: &str) {
     let svg = "clyde-happy.svg".to_string();
+    crate::sync_session_status_bubble(app, state, session_id, "attention");
     {
         let mut sm = state.lock_or_recover();
         sm.handle_session_end(session_id);
@@ -177,6 +179,7 @@ fn codex_complete_and_emit(app: &AppHandle, state: &SharedState, session_id: &st
     }
     crate::emit_state(app, "attention", &svg);
     crate::sync_hit(app);
+    crate::sync_session_manager_bubble(app, state);
     schedule_codex_completion_dismiss(app.clone(), state.clone());
 }
 

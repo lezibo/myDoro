@@ -33,6 +33,24 @@
     description: string;
   };
 
+  type SessionChainBlock = {
+    kind: string;
+    title: string;
+    body: string;
+  };
+
+  type SessionItem = {
+    id: string;
+    agent_label: string;
+    summary: string;
+    project: string;
+    short_id: string;
+    state: string;
+    state_label: string;
+    updated_label: string;
+    thread_url?: string | null;
+  };
+
   const ROOT_FIELD_KEY = '__root__';
 
   let {
@@ -58,6 +76,13 @@
     updateVersion = '',
     updateUrl = '',
     updateNotes = '',
+    statusLabel = '',
+    statusDescription = '',
+    statusState = '',
+    statusBadge = '',
+    threadUrl = '',
+    sessionChain = [],
+    sessionItems = [],
   }: {
     id: string;
     windowKind?: string;
@@ -81,12 +106,22 @@
     updateVersion?: string;
     updateUrl?: string;
     updateNotes?: string;
+    statusLabel?: string;
+    statusDescription?: string;
+    statusState?: string;
+    statusBadge?: string;
+    threadUrl?: string;
+    sessionChain?: SessionChainBlock[];
+    sessionItems?: SessionItem[];
   } = $props();
 
   let elicitationValues = $state<Record<string, unknown>>({});
+  let sessionManagerCollapsed = $state(false);
 
   const isModeNotice = $derived(windowKind === 'ModeNotice');
   const isUpdateNotice = $derived(windowKind === 'UpdateNotice');
+  const isSessionStatus = $derived(windowKind === 'SessionStatus');
+  const isSessionManager = $derived(windowKind === 'SessionManager');
   const commandText = $derived(extractCommand(toolInput));
   const headerMeta = $derived([sessionProject, sessionShortId].filter(Boolean).join(' · '));
   const shellName = $derived(detectShell(toolInput, toolName));
@@ -104,6 +139,18 @@
   );
   const badge = $derived(resolveBadge(toolName, isElicitation));
   const canSubmitElicitation = $derived(checkElicitationValidity(elicitationFields, elicitationValues));
+  const latestSessionSignal = $derived(latestSessionSignalBlock(sessionChain));
+  const activeSessionBlock = $derived(latestReadableSessionBlock(sessionChain));
+  const sessionCardTitle = $derived(
+    activeSessionBlock ? sessionBlockPreview(activeSessionBlock) : sessionSummary || t('activeThread'),
+  );
+  const sessionCardStatus = $derived(
+    latestSessionSignal?.kind === 'reasoning'
+      ? chainKindLabel('reasoning')
+      : activeSessionBlock
+        ? sessionBlockStatus(activeSessionBlock)
+        : statusLabel || statusDescription,
+  );
 
   const TOOL_BADGES: Record<string, string> = {
     Bash: 'BASH',
@@ -138,11 +185,23 @@
       dismiss: 'Dismiss',
       futureEditRequestsAutoApproved: 'Future edit requests can be approved automatically',
       goDownload: 'Download',
+      activeThread: 'Active Thread',
+      chainAssistant: 'Text',
+      chainEvent: 'Event',
+      chainReasoning: 'Thinking',
+      chainToolCall: 'Tool',
+      chainToolResult: 'Output',
+      chainUser: 'User',
+      collapse: 'Collapse',
+      expand: 'Expand',
+      manageSessions: 'Sessions',
       mode: 'Mode',
       modeChanged: 'Mode Changed',
       needsReply: '{agent} Needs Reply',
       no: 'No',
       openLink: 'Open Link',
+      openThread: 'Open Thread',
+      openSession: 'Open Session',
       openTerminal: 'Open Terminal',
       options: 'Options',
       permissionRequest: 'Permission Request',
@@ -186,11 +245,23 @@
       dismiss: '关闭',
       futureEditRequestsAutoApproved: '后续编辑请求可以自动批准',
       goDownload: '前往下载',
+      activeThread: '活跃线程',
+      chainAssistant: '文本',
+      chainEvent: '事件',
+      chainReasoning: '思考',
+      chainToolCall: '工具',
+      chainToolResult: '输出',
+      chainUser: '用户',
+      collapse: '收起',
+      expand: '展开',
+      manageSessions: '会话',
       mode: '模式',
       modeChanged: '模式已变更',
       needsReply: '{agent} 需要回复',
       no: '否',
       openLink: '打开链接',
+      openThread: '打开线程',
+      openSession: '打开会话',
       openTerminal: '打开终端',
       options: '选项',
       permissionRequest: '权限申请',
@@ -562,6 +633,65 @@
     await invoke('dismiss_update_version', { version: updateVersion });
   }
 
+  async function openThread() {
+    if (!threadUrl) return;
+    await invoke('open_session_thread', { id, url: threadUrl });
+  }
+
+  function chainKindLabel(kind: string): string {
+    if (kind === 'assistant') return t('chainAssistant');
+    if (kind === 'event') return t('chainEvent');
+    if (kind === 'reasoning') return t('chainReasoning');
+    if (kind === 'tool_call') return t('chainToolCall');
+    if (kind === 'tool_result') return t('chainToolResult');
+    if (kind === 'user') return t('chainUser');
+    return kind.replace(/[_-]+/g, ' ').toUpperCase();
+  }
+
+  function chainTitle(block: SessionChainBlock): string {
+    if (!block.title) return chainKindLabel(block.kind);
+    if (block.kind === 'assistant' && block.title === 'Codex') return chainKindLabel(block.kind);
+    if (block.kind === 'reasoning' && block.title === 'Thinking') return chainKindLabel(block.kind);
+    if (block.kind === 'user' && block.title === 'User') return chainKindLabel(block.kind);
+    return block.title;
+  }
+
+  function latestSessionSignalBlock(blocks: SessionChainBlock[]): SessionChainBlock | null {
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+      if (blocks[index].kind !== 'event') return blocks[index];
+    }
+    return blocks.length > 0 ? blocks[blocks.length - 1] : null;
+  }
+
+  function latestReadableSessionBlock(blocks: SessionChainBlock[]): SessionChainBlock | null {
+    for (let index = blocks.length - 1; index >= 0; index -= 1) {
+      if (blocks[index].kind !== 'event' && blocks[index].kind !== 'reasoning') return blocks[index];
+    }
+    return null;
+  }
+
+  function sessionBlockPreview(block: SessionChainBlock): string {
+    const body = block.body.replace(/\s+/g, ' ').trim();
+    return compactReason(body || chainTitle(block));
+  }
+
+  function sessionBlockStatus(block: SessionChainBlock): string {
+    const kind = chainKindLabel(block.kind);
+    const title = chainTitle(block);
+    return title && title !== kind ? `${kind} · ${title}` : kind;
+  }
+
+  function sessionItemMeta(item: SessionItem): string {
+    return [item.agent_label, item.project, item.short_id, item.updated_label].filter(Boolean).join(' · ');
+  }
+
+  async function openManagedSession(item: SessionItem) {
+    await invoke('open_session_target', {
+      sessionId: item.id,
+      url: item.thread_url || null,
+    });
+  }
+
   async function dismiss() {
     // Mode notice: close bubble via Rust to properly clean up BubbleMap
     await invoke('dismiss_bubble', { id });
@@ -593,6 +723,61 @@
         {t('skipVersion')}
       </button>
     </div>
+  </div>
+{:else if isSessionStatus}
+  <div class={`session-popover status-${statusState || 'running'}`}>
+    <button
+      class="session-popover-card bubble-drag-handle"
+      class:clickable={!!threadUrl}
+      onclick={() => {
+        if (threadUrl) openThread();
+      }}
+      aria-label={threadUrl ? t('openThread') : statusLabel}
+    >
+      <span class="session-popover-copy">
+        <span class="session-popover-title">{sessionCardTitle}</span>
+        <span class="session-popover-status">{sessionCardStatus}</span>
+      </span>
+      <span class="session-popover-info" aria-hidden="true">i</span>
+    </button>
+    <button class="session-popover-close" onclick={dismiss} aria-label={t('dismiss')}>
+      ×
+    </button>
+  </div>
+{:else if isSessionManager}
+  <div class="session-manager" class:collapsed={sessionManagerCollapsed}>
+    <button
+      class="session-manager-header bubble-drag-handle"
+      onclick={() => (sessionManagerCollapsed = !sessionManagerCollapsed)}
+      aria-label={sessionManagerCollapsed ? t('expand') : t('collapse')}
+    >
+      <span class="session-manager-copy">
+        <span class="session-manager-title">{t('manageSessions')} ({sessionItems.length})</span>
+        <span class="session-manager-status">
+          {sessionManagerCollapsed ? t('expand') : t('collapse')}
+        </span>
+      </span>
+      <span class="session-manager-toggle">{sessionManagerCollapsed ? '+' : '−'}</span>
+    </button>
+
+    {#if !sessionManagerCollapsed}
+      <div class="session-manager-list">
+        {#each sessionItems as item}
+          <button
+            class={`session-manager-item state-${item.state}`}
+            onclick={() => openManagedSession(item)}
+            aria-label={`${t('openSession')}: ${item.summary}`}
+          >
+            <span class="session-manager-dot" aria-hidden="true"></span>
+            <span class="session-manager-item-copy">
+              <span class="session-manager-item-title">{item.summary}</span>
+              <span class="session-manager-item-meta">{sessionItemMeta(item)}</span>
+            </span>
+            <span class="session-manager-state">{item.state_label}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
   </div>
 {:else if isModeNotice}
   <div class="bubble">
@@ -967,6 +1152,248 @@
     background: rgba(130, 210, 140, 0.14);
     color: #8fd99a;
     border-color: rgba(130, 210, 140, 0.16);
+  }
+
+  .session-popover {
+    position: relative;
+    width: 310px;
+    min-height: 86px;
+    padding-right: 18px;
+    overflow: visible;
+  }
+
+  .session-popover-card {
+    width: 100%;
+    min-height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 14px 9px 18px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 18px;
+    background: #171717;
+    color: #f5f5f5;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.26);
+    cursor: default;
+    text-align: left;
+    font: inherit;
+  }
+
+  .session-popover-card.clickable {
+    cursor: pointer;
+  }
+
+  .session-popover-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .session-popover-title {
+    overflow: hidden;
+    color: #f8f8f8;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.22;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .session-popover-status {
+    overflow: hidden;
+    color: #d7d7d7;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .session-popover-info {
+    display: inline-flex;
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #ff5a63;
+    border-radius: 999px;
+    color: #ff5a63;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1;
+  }
+
+  .status-running .session-popover-info {
+    border-color: #60a5fa;
+    color: #60a5fa;
+  }
+
+  .status-waiting .session-popover-info {
+    border-color: #facc15;
+    color: #facc15;
+  }
+
+  .status-review .session-popover-info {
+    border-color: #86efac;
+    color: #86efac;
+  }
+
+  .session-popover-close {
+    position: absolute;
+    top: 52px;
+    right: 0;
+    display: inline-flex;
+    width: 31px;
+    height: 31px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 999px;
+    background: #171717;
+    color: #f7f7f7;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.24);
+    cursor: pointer;
+    font-size: 21px;
+    line-height: 1;
+  }
+
+  .session-popover-close:hover {
+    background: #242424;
+  }
+
+  .session-manager {
+    width: 310px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-radius: 18px;
+    background: #171717;
+    color: #f5f5f5;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.26);
+  }
+
+  .session-manager-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px 10px 16px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+  }
+
+  .session-manager-copy,
+  .session-manager-item-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .session-manager-title,
+  .session-manager-item-title {
+    overflow: hidden;
+    color: #f8f8f8;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.22;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .session-manager-status,
+  .session-manager-item-meta {
+    overflow: hidden;
+    color: #d7d7d7;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .session-manager-toggle {
+    display: inline-flex;
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #f5f5f5;
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .session-manager-list {
+    display: flex;
+    max-height: 238px;
+    flex-direction: column;
+    gap: 6px;
+    overflow-y: auto;
+    padding: 0 8px 9px;
+  }
+
+  .session-manager-item {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 8px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.045);
+    color: inherit;
+    cursor: pointer;
+    font: inherit;
+    text-align: left;
+  }
+
+  .session-manager-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+  }
+
+  .session-manager-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: #60a5fa;
+  }
+
+  .state-thinking .session-manager-dot {
+    background: #facc15;
+  }
+
+  .state-idle .session-manager-dot,
+  .state-sleeping .session-manager-dot {
+    background: #a3a3a3;
+  }
+
+  .state-error .session-manager-dot,
+  .state-blocked .session-manager-dot {
+    background: #fb7185;
+  }
+
+  .session-manager-state {
+    max-width: 64px;
+    overflow: hidden;
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #e5e5e5;
+    font-size: 10px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .update-notes {

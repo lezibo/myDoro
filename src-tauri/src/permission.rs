@@ -13,6 +13,21 @@ pub enum WindowKind {
     ApprovalRequest,
     ModeNotice,
     UpdateNotice,
+    SessionStatus,
+    SessionManager,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionBubbleItem {
+    pub id: String,
+    pub agent_label: String,
+    pub summary: String,
+    pub project: String,
+    pub short_id: String,
+    pub state: String,
+    pub state_label: String,
+    pub updated_label: String,
+    pub thread_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +57,14 @@ pub struct BubbleData {
     pub update_url: Option<String>,
     pub update_notes: Option<String>,
     pub update_lang: Option<String>,
+    // session_status fields
+    pub status_label: Option<String>,
+    pub status_description: Option<String>,
+    pub status_state: Option<String>,
+    pub status_badge: Option<String>,
+    pub thread_url: Option<String>,
+    pub session_chain: Vec<crate::session_meta::SessionChainBlock>,
+    pub session_items: Vec<SessionBubbleItem>,
 }
 
 pub struct BubbleEntry {
@@ -115,6 +138,40 @@ pub fn show_bubble(app: &AppHandle, bubbles: &BubbleMap, data: BubbleData) -> bo
             eprintln!("Clyde: failed to create bubble window: {e}");
             false
         }
+    }
+}
+
+pub fn upsert_bubble(app: &AppHandle, bubbles: &BubbleMap, data: BubbleData) -> bool {
+    let id = data.id.clone();
+    let updated = {
+        let mut map = bubbles.lock_or_recover();
+        if let Some(entry) = map.get_mut(&id) {
+            entry.data = data.clone();
+            true
+        } else {
+            false
+        }
+    };
+
+    if !updated {
+        return show_bubble(app, bubbles, data);
+    }
+
+    let label = format!("bubble-{id}");
+    if let Some(win) = app.get_webview_window(&label) {
+        let _ = win.show();
+        let _ = app.emit(
+            "bubble-data-updated",
+            serde_json::json!({
+                "id": id,
+                "data": data,
+            }),
+        );
+        reposition_bubbles(app, bubbles);
+        true
+    } else {
+        close_bubble(app, bubbles, &id);
+        show_bubble(app, bubbles, data)
     }
 }
 

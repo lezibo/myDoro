@@ -14,8 +14,17 @@
     updated_secs_ago: number;
   }
 
+  interface CustomPet {
+    index: number;
+    name: string;
+    selected: boolean;
+  }
+
   interface MenuData {
     sessions: Session[];
+    custom_pets: CustomPet[];
+    using_custom_pet: boolean;
+    is_hidden: boolean;
     is_dnd: boolean;
     is_mini: boolean;
     lang: string;
@@ -52,6 +61,8 @@
     if (!data) return key;
     const zh: Record<string, string> = {
       size: '大小', miniMode: '极简模式', dnd: '勿扰模式',
+      wakePet: '唤醒宠物', tuckAwayPet: '收起宠物',
+      pets: '宠物', builtInPet: '内置宠物', noCustomPets: '没有自定义宠物',
       restoreInteraction: '恢复交互',
       opacity: '透明度', permissionWaitTime: '权限等待时间', lockPosition: '锁定位置', clickThrough: '点击穿透',
       timeImageInterval: '随机图片', off: '关闭',
@@ -62,6 +73,8 @@
     };
     const en: Record<string, string> = {
       size: 'Size', miniMode: 'Mini Mode', dnd: 'Sleep (Do Not Disturb)',
+      wakePet: 'Wake Pet', tuckAwayPet: 'Tuck Away Pet',
+      pets: 'Pets', builtInPet: 'Built-in Pet', noCustomPets: 'No custom pets',
       restoreInteraction: 'Restore Interaction',
       opacity: 'Opacity', permissionWaitTime: 'Permission Wait Time', lockPosition: 'Lock Position', clickThrough: 'Click Through',
       timeImageInterval: 'Random Image', off: 'Off',
@@ -170,7 +183,29 @@
 </script>
 
 {#if data}
+{@const petHidden = data.is_hidden}
 <div class="menu">
+  <button class="item" onclick={() => action(petHidden ? 'ctx-wake-pet' : 'ctx-tuck-away-pet')}>
+    <span>{petHidden ? t('wakePet') : t('tuckAwayPet')}</span>
+  </button>
+
+  <div class="item has-sub" role="button" tabindex="-1" onmouseenter={() => activeSubmenu = 'pets'} onmouseleave={() => activeSubmenu = null}>
+    <span>{t('pets')}</span>
+    <span class="arrow">›</span>
+    {#if activeSubmenu === 'pets'}
+      <div class="submenu">
+        <button class="item" class:checked={!data.using_custom_pet} onclick={() => action('ctx-pet-built-in')}>{t('builtInPet')}</button>
+        {#if data.custom_pets.length === 0}
+          <div class="item disabled">{t('noCustomPets')}</div>
+        {:else}
+          {#each data.custom_pets as pet}
+            <button class="item" class:checked={pet.selected} onclick={() => action(`ctx-pet-custom-${pet.index}`)}>{pet.name}</button>
+          {/each}
+        {/if}
+      </div>
+    {/if}
+  </div>
+
   <!-- Size -->
   <div class="item has-sub" role="button" tabindex="-1" onmouseenter={() => activeSubmenu = 'size'} onmouseleave={() => activeSubmenu = null}>
     <span>{t('size')}</span>
